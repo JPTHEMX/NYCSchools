@@ -67,11 +67,13 @@ class SchoolDetailViewController: UIViewController {
         self.items.removeAll()
         self.items.append(.overView((school.schoolName, school.overView)))
         if let score = self.score {
-            self.items.append(.sat((score.numberSATTestTakers, score.mathScore, score.readingScore, score.writingScore)))
+            self.items.append(.sat((score.numberTestTakers, score.mathScore, score.readingScore, score.writingScore)))
         }
-        self.items.append(.eligibility(school.eligibility))
+        if let eligibility = school.eligibility {
+            self.items.append(.eligibility(eligibility))
+        }
         let address = [school.primaryAddressLine, school.city, school.state, school.zip].compactMap { $0 }.joined(separator: ", ")
-        let timing = [school.startTiming, school.endTiming].compactMap { $0 }.joined(separator: " to ")
+        let timing = "\(school.startTiming ?? "") to \(school.endTiming ?? "")"
         self.items.append(.address((address, school.phoneNumber, school.email, school.websiteLink, timing)))
         DispatchQueue.main.async { [weak self] in
             self?.tableView.reloadData()
