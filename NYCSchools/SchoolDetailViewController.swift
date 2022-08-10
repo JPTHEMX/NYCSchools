@@ -72,18 +72,10 @@ class SchoolDetailViewController: UIViewController {
         if let eligibility = school.eligibility {
             self.items.append(.eligibility(eligibility))
         }
-        var address = [school.primaryAddressLine, school.city, school.state, school.zip].compactMap { $0 }.joined(separator: ", ")
-        var time = [school.startTime, school.endTime].compactMap { $0 }.joined(separator: " to ")
-        var phone = school.phoneNumber ?? ""
-        var email = school.email ?? ""
-        var website = school.website ?? ""
-        if !address.isEmpty || !time.isEmpty || !phone.isEmpty || !email.isEmpty || !website.isEmpty {
-            address = "Address: \(address.isEmpty ? "N/A" : address)"
-            phone = "Phone: \(phone.isEmpty ? "N/A" : phone)"
-            email = "Email: \(email.isEmpty ? "N/A" : email)"
-            website = "Website: \(website.isEmpty ? "N/A" : website)"
-            time = "Hours: \(time.isEmpty ? "N/A" : time)"
-            self.items.append(.address((address, phone, email, website, time)))
+        let address = [school.primaryAddressLine, school.city, school.state, school.zip].compactMap { $0 }.joined(separator: ", ")
+        let time = [school.startTime, school.endTime].compactMap { $0 }.joined(separator: " to ")
+        if !address.isEmpty || !time.isEmpty || school.phoneNumber != nil || school.email != nil || school.website != nil {
+            self.items.append(.address((address, school.phoneNumber, school.email, school.website, time.isEmpty ? nil : time)))
         }
         DispatchQueue.main.async { [weak self] in
             self?.tableView.reloadData()

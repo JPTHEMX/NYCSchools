@@ -22,11 +22,11 @@ class AddressTableViewCell: BaseTableViewCell {
     /// - Parameter item: Address
     func configureCell(item: Address) {
         self.item = item
-        self.addressLabel.text = item.address
-        self.phoneLabel.text = item.phone
-        self.emailLabel.text = item.email
-        self.websiteLabel.text = item.website
-        self.timingLabel.text = item.time
+        self.addressLabel.text = "Address: \(item.address ?? "N/A")"
+        self.phoneLabel.text = "Phone: \(item.phone ?? "N/A")"
+        self.emailLabel.text = "Email: \(item.email ?? "N/A")"
+        self.websiteLabel.text = "Website: \(item.website ?? "N/A")"
+        self.timingLabel.text = "Hours: \(item.time ?? "N/A")"
     }
     
 }
