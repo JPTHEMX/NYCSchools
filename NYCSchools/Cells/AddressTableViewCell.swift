@@ -26,7 +26,7 @@ class AddressTableViewCell: BaseTableViewCell {
         self.phoneLabel.text = item.phone
         self.emailLabel.text = item.email
         self.websiteLabel.text = item.website
-        self.timingLabel.text = item.timing
+        self.timingLabel.text = item.time
     }
     
 }

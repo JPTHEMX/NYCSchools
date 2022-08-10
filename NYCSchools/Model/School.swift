@@ -19,9 +19,9 @@ struct School: Codable {
     let state: String?
     let phoneNumber: String?
     let email: String?
-    let websiteLink: String?
-    let startTiming: String?
-    let endTiming: String?
+    let website: String?
+    let startTime: String?
+    let endTime: String?
     
     enum CodingKeys: String, CodingKey {
         case dbn = "dbn"
@@ -34,8 +34,8 @@ struct School: Codable {
         case state = "state_code"
         case phoneNumber = "phone_number"
         case email = "school_email"
-        case websiteLink = "website"
-        case startTiming = "start_time"
-        case endTiming = "end_time"
+        case website = "website"
+        case startTime = "start_time"
+        case endTime = "end_time"
     }
 }

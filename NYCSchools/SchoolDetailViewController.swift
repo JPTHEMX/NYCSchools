@@ -9,7 +9,7 @@ import UIKit
 
 typealias OverView = (schoolName: String?, overView: String?)
 typealias SAT = (numberTestTakers: String?, mathScore: String?, readingScore: String?, writingScore: String?)
-typealias Address = (address: String?, phone: String?, email: String?, website: String?, timing: String?)
+typealias Address = (address: String?, phone: String?, email: String?, website: String?, time: String?)
 
 enum Item {
     case overView(OverView)
@@ -72,9 +72,19 @@ class SchoolDetailViewController: UIViewController {
         if let eligibility = school.eligibility {
             self.items.append(.eligibility(eligibility))
         }
-        let address = [school.primaryAddressLine, school.city, school.state, school.zip].compactMap { $0 }.joined(separator: ", ")
-        let timing = "\(school.startTiming ?? "") to \(school.endTiming ?? "")"
-        self.items.append(.address((address, school.phoneNumber, school.email, school.websiteLink, timing)))
+        var address = [school.primaryAddressLine, school.city, school.state, school.zip].compactMap { $0 }.joined(separator: ", ")
+        var time = [school.startTime, school.endTime].compactMap { $0 }.joined(separator: " to ")
+        var phone = school.phoneNumber ?? ""
+        var email = school.email ?? ""
+        var website = school.website ?? ""
+        if !address.isEmpty || !time.isEmpty || !phone.isEmpty || !email.isEmpty || !website.isEmpty {
+            address = "Address: \(address.isEmpty ? "N/A" : address)"
+            phone = "Phone: \(phone.isEmpty ? "N/A" : phone)"
+            email = "Email: \(email.isEmpty ? "N/A" : email)"
+            website = "Website: \(website.isEmpty ? "N/A" : website)"
+            time = "Hours: \(time.isEmpty ? "N/A" : time)"
+            self.items.append(.address((address, phone, email, website, time)))
+        }
         DispatchQueue.main.async { [weak self] in
             self?.tableView.reloadData()
         }
