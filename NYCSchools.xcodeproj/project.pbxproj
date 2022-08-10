@@ -7,15 +7,41 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C40F3D7428A3562800AC98D7 /* SatTableViewCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40F3D7228A3562800AC98D7 /* SatTableViewCell.swift */; };
+		C40F3D7528A3562800AC98D7 /* SatTableViewCell.xib in Resources */ = {isa = PBXBuildFile; fileRef = C40F3D7328A3562800AC98D7 /* SatTableViewCell.xib */; };
+		C40F3D7828A35C3500AC98D7 /* HeaderTableViewCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40F3D7628A35C3500AC98D7 /* HeaderTableViewCell.swift */; };
+		C40F3D7928A35C3500AC98D7 /* HeaderTableViewCell.xib in Resources */ = {isa = PBXBuildFile; fileRef = C40F3D7728A35C3500AC98D7 /* HeaderTableViewCell.xib */; };
+		C40F3D7C28A3668000AC98D7 /* EligibilityTableViewCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40F3D7A28A3668000AC98D7 /* EligibilityTableViewCell.swift */; };
+		C40F3D7D28A3668000AC98D7 /* EligibilityTableViewCell.xib in Resources */ = {isa = PBXBuildFile; fileRef = C40F3D7B28A3668000AC98D7 /* EligibilityTableViewCell.xib */; };
+		C40F3D8028A368D100AC98D7 /* AddressTableViewCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = C40F3D7E28A368D100AC98D7 /* AddressTableViewCell.swift */; };
+		C40F3D8128A368D100AC98D7 /* AddressTableViewCell.xib in Resources */ = {isa = PBXBuildFile; fileRef = C40F3D7F28A368D100AC98D7 /* AddressTableViewCell.xib */; };
+		C41B07BF28A36E2800E4E2ED /* UIActivityIndicatorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C41B07BE28A36E2800E4E2ED /* UIActivityIndicatorView.swift */; };
+		C41B07C128A377BB00E4E2ED /* ServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C41B07C028A377BB00E4E2ED /* ServiceTests.swift */; };
+		C41B07C228A377CD00E4E2ED /* ApiService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43617E728A31DC700A7784B /* ApiService.swift */; };
+		C41B07C328A377D000E4E2ED /* ServiceError.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43617E928A31F2000A7784B /* ServiceError.swift */; };
+		C41B07C428A378EC00E4E2ED /* Constants.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43617E528A31DAD00A7784B /* Constants.swift */; };
+		C41B07C528A3790100E4E2ED /* School.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43617E128A31D6900A7784B /* School.swift */; };
+		C41B07C628A3790400E4E2ED /* SATScore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43617E328A31D8100A7784B /* SATScore.swift */; };
 		C43617B028A31C2400A7784B /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43617AF28A31C2400A7784B /* AppDelegate.swift */; };
 		C43617B228A31C2400A7784B /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43617B128A31C2400A7784B /* SceneDelegate.swift */; };
-		C43617B428A31C2400A7784B /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43617B328A31C2400A7784B /* ViewController.swift */; };
+		C43617B428A31C2400A7784B /* SchoolsListController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43617B328A31C2400A7784B /* SchoolsListController.swift */; };
 		C43617B728A31C2500A7784B /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = C43617B528A31C2500A7784B /* Main.storyboard */; };
 		C43617B928A31C2600A7784B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C43617B828A31C2600A7784B /* Assets.xcassets */; };
 		C43617BC28A31C2600A7784B /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = C43617BA28A31C2600A7784B /* LaunchScreen.storyboard */; };
 		C43617C728A31C2600A7784B /* NYCSchoolsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43617C628A31C2600A7784B /* NYCSchoolsTests.swift */; };
 		C43617D128A31C2600A7784B /* NYCSchoolsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43617D028A31C2600A7784B /* NYCSchoolsUITests.swift */; };
 		C43617D328A31C2600A7784B /* NYCSchoolsUITestsLaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43617D228A31C2600A7784B /* NYCSchoolsUITestsLaunchTests.swift */; };
+		C43617E228A31D6900A7784B /* School.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43617E128A31D6900A7784B /* School.swift */; };
+		C43617E428A31D8100A7784B /* SATScore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43617E328A31D8100A7784B /* SATScore.swift */; };
+		C43617E628A31DAD00A7784B /* Constants.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43617E528A31DAD00A7784B /* Constants.swift */; };
+		C43617E828A31DC700A7784B /* ApiService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43617E728A31DC700A7784B /* ApiService.swift */; };
+		C43617EA28A31F2000A7784B /* ServiceError.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43617E928A31F2000A7784B /* ServiceError.swift */; };
+		C43617EE28A323A000A7784B /* UIView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43617ED28A323A000A7784B /* UIView.swift */; };
+		C43617F028A323C100A7784B /* UITableViewCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43617EF28A323C100A7784B /* UITableViewCell.swift */; };
+		C43617F228A3241E00A7784B /* BaseTableViewCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43617F128A3241E00A7784B /* BaseTableViewCell.swift */; };
+		C43617F528A3245000A7784B /* SchoolTableViewCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43617F328A3245000A7784B /* SchoolTableViewCell.swift */; };
+		C43617F628A3245000A7784B /* SchoolTableViewCell.xib in Resources */ = {isa = PBXBuildFile; fileRef = C43617F428A3245000A7784B /* SchoolTableViewCell.xib */; };
+		C43617FB28A33F8300A7784B /* SchoolDetailViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C43617FA28A33F8300A7784B /* SchoolDetailViewController.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -36,10 +62,20 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		C40F3D7228A3562800AC98D7 /* SatTableViewCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SatTableViewCell.swift; sourceTree = "<group>"; };
+		C40F3D7328A3562800AC98D7 /* SatTableViewCell.xib */ = {isa = PBXFileReference; lastKnownFileType = file.xib; path = SatTableViewCell.xib; sourceTree = "<group>"; };
+		C40F3D7628A35C3500AC98D7 /* HeaderTableViewCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeaderTableViewCell.swift; sourceTree = "<group>"; };
+		C40F3D7728A35C3500AC98D7 /* HeaderTableViewCell.xib */ = {isa = PBXFileReference; lastKnownFileType = file.xib; path = HeaderTableViewCell.xib; sourceTree = "<group>"; };
+		C40F3D7A28A3668000AC98D7 /* EligibilityTableViewCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EligibilityTableViewCell.swift; sourceTree = "<group>"; };
+		C40F3D7B28A3668000AC98D7 /* EligibilityTableViewCell.xib */ = {isa = PBXFileReference; lastKnownFileType = file.xib; path = EligibilityTableViewCell.xib; sourceTree = "<group>"; };
+		C40F3D7E28A368D100AC98D7 /* AddressTableViewCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddressTableViewCell.swift; sourceTree = "<group>"; };
+		C40F3D7F28A368D100AC98D7 /* AddressTableViewCell.xib */ = {isa = PBXFileReference; lastKnownFileType = file.xib; path = AddressTableViewCell.xib; sourceTree = "<group>"; };
+		C41B07BE28A36E2800E4E2ED /* UIActivityIndicatorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIActivityIndicatorView.swift; sourceTree = "<group>"; };
+		C41B07C028A377BB00E4E2ED /* ServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceTests.swift; sourceTree = "<group>"; };
 		C43617AC28A31C2400A7784B /* NYCSchools.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NYCSchools.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C43617AF28A31C2400A7784B /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		C43617B128A31C2400A7784B /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
-		C43617B328A31C2400A7784B /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
+		C43617B328A31C2400A7784B /* SchoolsListController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SchoolsListController.swift; sourceTree = "<group>"; };
 		C43617B628A31C2500A7784B /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
 		C43617B828A31C2600A7784B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C43617BB28A31C2600A7784B /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
@@ -49,6 +85,17 @@
 		C43617CC28A31C2600A7784B /* NYCSchoolsUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NYCSchoolsUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C43617D028A31C2600A7784B /* NYCSchoolsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NYCSchoolsUITests.swift; sourceTree = "<group>"; };
 		C43617D228A31C2600A7784B /* NYCSchoolsUITestsLaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NYCSchoolsUITestsLaunchTests.swift; sourceTree = "<group>"; };
+		C43617E128A31D6900A7784B /* School.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = School.swift; sourceTree = "<group>"; };
+		C43617E328A31D8100A7784B /* SATScore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SATScore.swift; sourceTree = "<group>"; };
+		C43617E528A31DAD00A7784B /* Constants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Constants.swift; sourceTree = "<group>"; };
+		C43617E728A31DC700A7784B /* ApiService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApiService.swift; sourceTree = "<group>"; };
+		C43617E928A31F2000A7784B /* ServiceError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceError.swift; sourceTree = "<group>"; };
+		C43617ED28A323A000A7784B /* UIView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIView.swift; sourceTree = "<group>"; };
+		C43617EF28A323C100A7784B /* UITableViewCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITableViewCell.swift; sourceTree = "<group>"; };
+		C43617F128A3241E00A7784B /* BaseTableViewCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BaseTableViewCell.swift; sourceTree = "<group>"; };
+		C43617F328A3245000A7784B /* SchoolTableViewCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SchoolTableViewCell.swift; sourceTree = "<group>"; };
+		C43617F428A3245000A7784B /* SchoolTableViewCell.xib */ = {isa = PBXFileReference; lastKnownFileType = file.xib; path = SchoolTableViewCell.xib; sourceTree = "<group>"; };
+		C43617FA28A33F8300A7784B /* SchoolDetailViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SchoolDetailViewController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -101,11 +148,17 @@
 			children = (
 				C43617AF28A31C2400A7784B /* AppDelegate.swift */,
 				C43617B128A31C2400A7784B /* SceneDelegate.swift */,
-				C43617B328A31C2400A7784B /* ViewController.swift */,
+				C43617B328A31C2400A7784B /* SchoolsListController.swift */,
+				C43617FA28A33F8300A7784B /* SchoolDetailViewController.swift */,
 				C43617B528A31C2500A7784B /* Main.storyboard */,
 				C43617B828A31C2600A7784B /* Assets.xcassets */,
 				C43617BA28A31C2600A7784B /* LaunchScreen.storyboard */,
 				C43617BD28A31C2600A7784B /* Info.plist */,
+				C43617E028A31D5B00A7784B /* Model */,
+				C43617EB28A3231C00A7784B /* Cells */,
+				C43617DF28A31CD200A7784B /* Service */,
+				C43617EC28A3238300A7784B /* Extensions */,
+				C43617FC28A3404600A7784B /* Utils */,
 			);
 			path = NYCSchools;
 			sourceTree = "<group>";
@@ -114,6 +167,7 @@
 			isa = PBXGroup;
 			children = (
 				C43617C628A31C2600A7784B /* NYCSchoolsTests.swift */,
+				C41B07C028A377BB00E4E2ED /* ServiceTests.swift */,
 			);
 			path = NYCSchoolsTests;
 			sourceTree = "<group>";
@@ -125,6 +179,60 @@
 				C43617D228A31C2600A7784B /* NYCSchoolsUITestsLaunchTests.swift */,
 			);
 			path = NYCSchoolsUITests;
+			sourceTree = "<group>";
+		};
+		C43617DF28A31CD200A7784B /* Service */ = {
+			isa = PBXGroup;
+			children = (
+				C43617E728A31DC700A7784B /* ApiService.swift */,
+				C43617E928A31F2000A7784B /* ServiceError.swift */,
+			);
+			path = Service;
+			sourceTree = "<group>";
+		};
+		C43617E028A31D5B00A7784B /* Model */ = {
+			isa = PBXGroup;
+			children = (
+				C43617E128A31D6900A7784B /* School.swift */,
+				C43617E328A31D8100A7784B /* SATScore.swift */,
+			);
+			path = Model;
+			sourceTree = "<group>";
+		};
+		C43617EB28A3231C00A7784B /* Cells */ = {
+			isa = PBXGroup;
+			children = (
+				C43617F128A3241E00A7784B /* BaseTableViewCell.swift */,
+				C43617F328A3245000A7784B /* SchoolTableViewCell.swift */,
+				C43617F428A3245000A7784B /* SchoolTableViewCell.xib */,
+				C40F3D7628A35C3500AC98D7 /* HeaderTableViewCell.swift */,
+				C40F3D7728A35C3500AC98D7 /* HeaderTableViewCell.xib */,
+				C40F3D7228A3562800AC98D7 /* SatTableViewCell.swift */,
+				C40F3D7328A3562800AC98D7 /* SatTableViewCell.xib */,
+				C40F3D7A28A3668000AC98D7 /* EligibilityTableViewCell.swift */,
+				C40F3D7B28A3668000AC98D7 /* EligibilityTableViewCell.xib */,
+				C40F3D7E28A368D100AC98D7 /* AddressTableViewCell.swift */,
+				C40F3D7F28A368D100AC98D7 /* AddressTableViewCell.xib */,
+			);
+			path = Cells;
+			sourceTree = "<group>";
+		};
+		C43617EC28A3238300A7784B /* Extensions */ = {
+			isa = PBXGroup;
+			children = (
+				C43617ED28A323A000A7784B /* UIView.swift */,
+				C43617EF28A323C100A7784B /* UITableViewCell.swift */,
+				C41B07BE28A36E2800E4E2ED /* UIActivityIndicatorView.swift */,
+			);
+			path = Extensions;
+			sourceTree = "<group>";
+		};
+		C43617FC28A3404600A7784B /* Utils */ = {
+			isa = PBXGroup;
+			children = (
+				C43617E528A31DAD00A7784B /* Constants.swift */,
+			);
+			path = Utils;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -232,8 +340,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				C43617BC28A31C2600A7784B /* LaunchScreen.storyboard in Resources */,
+				C40F3D7928A35C3500AC98D7 /* HeaderTableViewCell.xib in Resources */,
+				C40F3D8128A368D100AC98D7 /* AddressTableViewCell.xib in Resources */,
+				C40F3D7528A3562800AC98D7 /* SatTableViewCell.xib in Resources */,
 				C43617B928A31C2600A7784B /* Assets.xcassets in Resources */,
 				C43617B728A31C2500A7784B /* Main.storyboard in Resources */,
+				C43617F628A3245000A7784B /* SchoolTableViewCell.xib in Resources */,
+				C40F3D7D28A3668000AC98D7 /* EligibilityTableViewCell.xib in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -258,9 +371,24 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				C43617B428A31C2400A7784B /* ViewController.swift in Sources */,
+				C43617B428A31C2400A7784B /* SchoolsListController.swift in Sources */,
+				C41B07BF28A36E2800E4E2ED /* UIActivityIndicatorView.swift in Sources */,
+				C43617FB28A33F8300A7784B /* SchoolDetailViewController.swift in Sources */,
 				C43617B028A31C2400A7784B /* AppDelegate.swift in Sources */,
+				C40F3D7C28A3668000AC98D7 /* EligibilityTableViewCell.swift in Sources */,
 				C43617B228A31C2400A7784B /* SceneDelegate.swift in Sources */,
+				C43617E428A31D8100A7784B /* SATScore.swift in Sources */,
+				C40F3D7828A35C3500AC98D7 /* HeaderTableViewCell.swift in Sources */,
+				C43617E228A31D6900A7784B /* School.swift in Sources */,
+				C43617F228A3241E00A7784B /* BaseTableViewCell.swift in Sources */,
+				C43617F028A323C100A7784B /* UITableViewCell.swift in Sources */,
+				C43617F528A3245000A7784B /* SchoolTableViewCell.swift in Sources */,
+				C43617EA28A31F2000A7784B /* ServiceError.swift in Sources */,
+				C40F3D7428A3562800AC98D7 /* SatTableViewCell.swift in Sources */,
+				C43617E628A31DAD00A7784B /* Constants.swift in Sources */,
+				C43617EE28A323A000A7784B /* UIView.swift in Sources */,
+				C40F3D8028A368D100AC98D7 /* AddressTableViewCell.swift in Sources */,
+				C43617E828A31DC700A7784B /* ApiService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -268,7 +396,13 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C41B07C428A378EC00E4E2ED /* Constants.swift in Sources */,
+				C41B07C528A3790100E4E2ED /* School.swift in Sources */,
+				C41B07C328A377D000E4E2ED /* ServiceError.swift in Sources */,
+				C41B07C628A3790400E4E2ED /* SATScore.swift in Sources */,
 				C43617C728A31C2600A7784B /* NYCSchoolsTests.swift in Sources */,
+				C41B07C128A377BB00E4E2ED /* ServiceTests.swift in Sources */,
+				C41B07C228A377CD00E4E2ED /* ApiService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
