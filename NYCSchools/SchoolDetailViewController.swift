@@ -75,7 +75,11 @@ class SchoolDetailViewController: UIViewController {
         let address = [school.primaryAddressLine, school.city, school.state, school.zip].compactMap { $0 }.joined(separator: ", ")
         let time = [school.startTime, school.endTime].compactMap { $0 }.joined(separator: " to ")
         if !address.isEmpty || !time.isEmpty || school.phoneNumber != nil || school.email != nil || school.website != nil {
-            self.items.append(.address((address, school.phoneNumber, school.email, school.website, time.isEmpty ? nil : time)))
+            self.items.append(.address((address.isEmpty ? nil : address,
+                                        school.phoneNumber,
+                                        school.email,
+                                        school.website,
+                                        time.isEmpty ? nil : time)))
         }
         DispatchQueue.main.async { [weak self] in
             self?.tableView.reloadData()
