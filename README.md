@@ -955,3 +955,126 @@ class StickyHeaderFlowLayoutTests: XCTestCase {
         XCTAssertFalse(layout.shouldInvalidateLayout(forBoundsChange: newBounds), "Should not invalidate if neither Y nor size changes")
     }
 }
+
+/////////////////////////////
+
+import XCTest
+@testable import testaaaaaaa // Replace with your actual module name
+
+@MainActor
+class ViewControllerLayoutTests: XCTestCase {
+
+    var viewController: ViewController!
+    var collectionView: UICollectionView!
+    var layout: StickyHeaderFlowLayout!
+
+    let defaultHeaderHeight: CGFloat = 50.0
+    let collectionViewWidth: CGFloat = 375.0
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+
+        viewController = ViewController()
+
+        viewController.loadViewIfNeeded()
+
+        layout = StickyHeaderFlowLayout()
+        layout.stickyHeaderSection = 0
+        layout.sectionInset = UIEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
+
+        let frame = CGRect(x: 0, y: 0, width: collectionViewWidth, height: 600)
+        collectionView = UICollectionView(frame: frame, collectionViewLayout: layout)
+
+        viewController.collectionView = collectionView
+        collectionView.collectionViewLayout = layout
+
+        collectionView.delegate = viewController
+        collectionView.dataSource = viewController
+    }
+
+    override func tearDownWithError() throws {
+        viewController = nil
+        collectionView = nil
+        layout = nil
+        try super.tearDownWithError()
+    }
+
+    private func setupSectionData(_ data: [[CellData]]) {
+        viewController.sectionData = data
+    }
+
+    func testReferenceSize_ForStickyHeader_WhenSectionNotEmpty() throws {
+        let stickySection = 0
+        layout.stickyHeaderSection = stickySection
+        let testData = [
+            [CellData(size: .zero, color: .red)],
+            [CellData(size: .zero, color: .blue)]
+        ]
+        setupSectionData(testData)
+        let expectedSize = CGSize(width: collectionViewWidth, height: defaultHeaderHeight)
+
+        let actualSize = viewController.collectionView(collectionView, layout: layout, referenceSizeForHeaderInSection: stickySection)
+
+        XCTAssertEqual(actualSize, expectedSize, "Sticky header should always have default size when section is not empty")
+    }
+
+    func testReferenceSize_ForStickyHeader_WhenSectionIsEmpty() throws {
+        let stickySection = 0
+        layout.stickyHeaderSection = stickySection
+        let testData = [
+            [],
+            [CellData(size: .zero, color: .blue)]
+        ]
+        setupSectionData(testData)
+        let expectedSize = CGSize(width: collectionViewWidth, height: defaultHeaderHeight)
+
+        let actualSize = viewController.collectionView(collectionView, layout: layout, referenceSizeForHeaderInSection: stickySection)
+
+        XCTAssertEqual(actualSize, expectedSize, "Sticky header should *always* have default size, even when its section is empty")
+    }
+
+    func testReferenceSize_ForNonStickyHeader_WhenSectionNotEmpty() throws {
+        let nonStickySection = 1
+        layout.stickyHeaderSection = 0
+        let testData = [
+            [CellData(size: .zero, color: .red)],
+            [CellData(size: .zero, color: .blue)]
+        ]
+        setupSectionData(testData)
+        let expectedSize = CGSize(width: collectionViewWidth, height: defaultHeaderHeight)
+
+        let actualSize = viewController.collectionView(collectionView, layout: layout, referenceSizeForHeaderInSection: nonStickySection)
+
+        XCTAssertEqual(actualSize, expectedSize, "Non-sticky, non-empty header should have default size")
+    }
+
+    func testReferenceSize_ForNonStickyHeader_WhenSectionIsEmpty() throws {
+        let nonStickyEmptySection = 1
+        layout.stickyHeaderSection = 0
+        let testData = [
+            [CellData(size: .zero, color: .red)],
+            []
+        ]
+        setupSectionData(testData)
+        let expectedSize = CGSize.zero
+
+        let actualSize = viewController.collectionView(collectionView, layout: layout, referenceSizeForHeaderInSection: nonStickyEmptySection)
+
+        XCTAssertEqual(actualSize, expectedSize, "Non-sticky, empty header should have zero size")
+    }
+
+    func testReferenceSize_ForInvalidSection() throws {
+        let invalidSection = 5
+        layout.stickyHeaderSection = 0
+        let testData = [
+            [CellData(size: .zero, color: .red)],
+            []
+        ]
+        setupSectionData(testData)
+        let expectedSize = CGSize.zero
+
+        let actualSize = viewController.collectionView(collectionView, layout: layout, referenceSizeForHeaderInSection: invalidSection)
+
+        XCTAssertEqual(actualSize, expectedSize, "Header size for invalid section should be zero")
+    }
+}
