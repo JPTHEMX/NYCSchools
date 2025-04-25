@@ -1,14 +1,14 @@
 import UIKit
 import Foundation
 
-// MARK: - Data Models
+// MARK: - Data Models (Adjusted)
 
 struct Offer: Hashable {
     let id = UUID()
     let name: String
     let category: Category
     let heroURLString: String?
-    let logoURLString: String?
+    let logoURLString: String? // Assumed non-nil for configure logic
 
     func getHeroImageURL() -> String? { heroURLString }
     func getLogoImageURL() -> String? { logoURLString }
@@ -24,7 +24,7 @@ struct Offer: Hashable {
 
 struct ItemModel {
     var title: String?
-    var image: UIImage?
+    var image: UIImage? // Will store the LOGO image
     var isLoading: Bool = false
 }
 
@@ -45,10 +45,11 @@ enum Category: String, CaseIterable, Hashable {
 // MARK: - Reload Delegate Protocol
 
 protocol ReloadDataProtocol: AnyObject {
-    func reloadList()
+    // func reloadItem(at indexPath: IndexPath) // Preferred
+    func reloadList() // Fallback
 }
 
-// MARK: - WalletViewModel
+// MARK: - WalletViewModel (Using internal state & sync cache check)
 
 final class WalletViewModel {
     weak var delegate: ReloadDataProtocol?
@@ -98,20 +99,38 @@ final class WalletViewModel {
     }
 
     func getItemModel(at indexPath: IndexPath) -> ItemModel? {
-        return getItem(at: indexPath)?.model
+        guard let category = category(for: indexPath.section),
+              var itemsInCategory = itemsByCategory[category],
+              indexPath.row < itemsInCategory.count
+        else {
+            return nil
+        }
+
+        var item = itemsInCategory[indexPath.row]
+
+        if let existingImage = item.model.image {
+            return item.model
+        }
+
+        if let logoUrlString = item.offer.getLogoImageURL(), let url = URL(string: logoUrlString) {
+            let request = URLRequest(url: url)
+            if let cachedResponse = URLCache.shared.cachedResponse(for: request),
+               let cachedImage = UIImage(data: cachedResponse.data)
+            {
+                item.model.image = cachedImage
+                itemsByCategory[category]![indexPath.row].model.image = cachedImage
+                return item.model
+            } else {
+                launchLoadingTaskIfNeeded(for: url, at: indexPath)
+            }
+        }
+
+        return item.model
     }
 
     // MARK: - Async Image Loading Logic
 
-    func loadImageIfNeeded(for indexPath: IndexPath) {
-        guard let item = getItem(at: indexPath),
-              item.model.image == nil,
-              !item.model.isLoading,
-              let logoUrlString = item.offer.getLogoImageURL(),
-              let url = URL(string: logoUrlString) else {
-            return
-        }
-
+    private func launchLoadingTaskIfNeeded(for url: URL, at indexPath: IndexPath) {
         taskLock.lock()
         let shouldStart = !loadingURLs.contains(url)
         if shouldStart {
@@ -122,10 +141,11 @@ final class WalletViewModel {
         guard shouldStart else { return }
 
         setItemLoadingState(isLoading: true, at: indexPath)
+        // delegate?.reloadItem(at: indexPath) // Optional: If using specific reload
 
         Task(priority: .background) {
             var loadedImage: UIImage? = nil
-            var loadedFromNetwork = false
+            var loadSucceeded = false
 
             defer {
                 Task { @MainActor [weak self] in
@@ -133,7 +153,7 @@ final class WalletViewModel {
                     self.taskLock.lock()
                     self.loadingURLs.remove(url)
                     self.taskLock.unlock()
-                    if loadedImage == nil {
+                    if !loadSucceeded { // Ensure isLoading is false if load failed/cancelled
                          self.setItemLoadingState(isLoading: false, at: indexPath)
                     }
                 }
@@ -143,12 +163,12 @@ final class WalletViewModel {
                 let dataValue = try await self.imageLoader.loadImage(from: url, type: .logo)
                 if let img = UIImage(data: dataValue.data) {
                     loadedImage = img
-                    loadedFromNetwork = true
+                    loadSucceeded = true
                 } else {
                     throw ImageLoadingError.decompressionFailed
                 }
             } catch is CancellationError {
-                // Ignore cancellation error in terms of UI update, defer handles cleanup
+                // Ignored for UI update, defer handles cleanup
             } catch {
                 print("Error loading logo \(url.lastPathComponent): \(error)")
             }
@@ -157,14 +177,14 @@ final class WalletViewModel {
                 await MainActor.run { [weak self] in
                     guard let self = self else { return }
                     self.updateItemModel(image: finalImage, isLoading: false, at: indexPath)
-                    if loadedFromNetwork {
-                        self.counter += 1
-                    }
-                    self.delegate?.reloadList()
+                    self.counter += 1 // Increment counter on successful load
+                    self.delegate?.reloadList() // Trigger global reload
                 }
             }
         }
     }
+
+    // MARK: - Cancellation
 
     func cancelLoad(for indexPath: IndexPath) {
          guard let item = getItem(at: indexPath),
@@ -178,6 +198,7 @@ final class WalletViewModel {
          if isLoading {
             Task { await imageLoader.cancelLoad(for: url) }
             setItemLoadingState(isLoading: false, at: indexPath)
+            // delegate?.reloadItem(at: indexPath) // Optional: If using specific reload
          }
     }
 
