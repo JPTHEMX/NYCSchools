@@ -1078,3 +1078,177 @@ class ViewControllerLayoutTests: XCTestCase {
         XCTAssertEqual(actualSize, expectedSize, "Header size for invalid section should be zero")
     }
 }
+
+/////////////////////
+
+import XCTest
+@testable import testaaaaaaa // Replace with your actual module name
+
+@MainActor
+class ViewControllerDataSourceTests: XCTestCase { // Or add to ViewControllerLayoutTests
+
+    var viewController: ViewController!
+    var collectionView: UICollectionView!
+    var layout: UICollectionViewFlowLayout! // Can use standard layout for this test
+
+    let cellIdentifier = "MyCell" // Matches ViewController's identifier
+    let labelTag = 1001          // Matches ViewController's label tag
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+
+        viewController = ViewController()
+        viewController.loadViewIfNeeded()
+
+        // Use a standard layout, StickyHeaderFlowLayout specifics aren't needed for cellForItemAt
+        layout = UICollectionViewFlowLayout()
+        layout.itemSize = CGSize(width: 50, height: 50) // Provide a default item size
+
+        let frame = CGRect(x: 0, y: 0, width: 375, height: 600)
+        collectionView = UICollectionView(frame: frame, collectionViewLayout: layout)
+
+        // *** Crucial: Register the cell class ***
+        collectionView.register(UICollectionViewCell.self, forCellWithReuseIdentifier: cellIdentifier)
+
+        viewController.collectionView = collectionView
+        collectionView.collectionViewLayout = layout
+
+        collectionView.delegate = viewController
+        collectionView.dataSource = viewController
+    }
+
+    override func tearDownWithError() throws {
+        viewController = nil
+        collectionView = nil
+        layout = nil
+        try super.tearDownWithError()
+    }
+
+    private func setupSectionData(_ data: [[CellData]]) {
+        viewController.sectionData = data
+        // Reload data is needed so the collection view knows about the new item counts
+        // when dequeueReusableCell is implicitly called by cellForItemAt
+        collectionView.reloadData()
+    }
+
+    // MARK: - Tests for cellForItemAt
+
+    func testCellForItemAt_WithValidIndexPath_ConfiguresCellCorrectly() throws {
+        // Arrange
+        let testIndexPath = IndexPath(item: 1, section: 0)
+        let expectedColor = UIColor.systemTeal
+        let expectedSize = CGSize(width: 100, height: 80)
+        let expectedCornerRadius: CGFloat = 4.0
+        let testData = [
+            [
+                CellData(size: CGSize(width: 50, height: 50), color: .systemRed),
+                CellData(size: expectedSize, color: expectedColor), // Data for testIndexPath
+                CellData(size: CGSize(width: 60, height: 60), color: .systemBlue)
+            ]
+        ]
+        setupSectionData(testData)
+        let expectedLabelText = "S\(testIndexPath.section) I\(testIndexPath.item) \(Int(expectedSize.width))x\(Int(expectedSize.height))"
+
+        // Act
+        // Directly call the dataSource method
+        let cell = viewController.collectionView(collectionView, cellForItemAt: testIndexPath)
+
+        // Assert
+        XCTAssertNotNil(cell, "Cell should not be nil")
+        XCTAssertEqual(cell.backgroundColor, expectedColor, "Cell background color should match data")
+        XCTAssertEqual(cell.layer.cornerRadius, expectedCornerRadius, "Cell corner radius should be set")
+
+        // Assert Label configuration
+        let label = cell.contentView.viewWithTag(labelTag) as? UILabel
+        XCTAssertNotNil(label, "Label with tag \(labelTag) should exist in the cell")
+        XCTAssertEqual(label?.text, expectedLabelText, "Label text should be configured correctly")
+        // Optional: Check other label properties if critical
+        // XCTAssertEqual(label?.font, UIFont.systemFont(ofSize: 9))
+        // XCTAssertEqual(label?.textAlignment, .center)
+    }
+
+    func testCellForItemAt_WithInvalidSection_ReturnsFallbackCell() throws {
+        // Arrange
+        let invalidIndexPath = IndexPath(item: 0, section: 5) // Section 5 does not exist
+        let testData = [
+            [CellData(size: .zero, color: .red)]
+        ]
+        setupSectionData(testData)
+
+        // Act
+        let cell = viewController.collectionView(collectionView, cellForItemAt: invalidIndexPath)
+
+        // Assert
+        XCTAssertNotNil(cell)
+        XCTAssertEqual(cell.backgroundColor, .systemRed, "Fallback cell background should be red")
+        // Check if subviews were removed (label should not be present)
+        let label = cell.contentView.viewWithTag(labelTag)
+        XCTAssertNil(label, "Label should not be present in fallback cell")
+        XCTAssertTrue(cell.contentView.subviews.isEmpty, "Fallback cell content view should be empty")
+    }
+
+    func testCellForItemAt_WithInvalidItem_ReturnsFallbackCell() throws {
+        // Arrange
+        let invalidIndexPath = IndexPath(item: 5, section: 0) // Item 5 does not exist in section 0
+        let testData = [
+            [CellData(size: .zero, color: .red)] // Only one item in section 0
+        ]
+        setupSectionData(testData)
+
+        // Act
+        let cell = viewController.collectionView(collectionView, cellForItemAt: invalidIndexPath)
+
+        // Assert
+        XCTAssertNotNil(cell)
+        XCTAssertEqual(cell.backgroundColor, .systemRed, "Fallback cell background should be red")
+        let label = cell.contentView.viewWithTag(labelTag)
+        XCTAssertNil(label, "Label should not be present in fallback cell")
+         XCTAssertTrue(cell.contentView.subviews.isEmpty, "Fallback cell content view should be empty")
+    }
+
+    func testCellForItemAt_LabelIsReusedAndUpdated() throws {
+        // Arrange
+        let indexPath1 = IndexPath(item: 0, section: 0)
+        let indexPath2 = IndexPath(item: 1, section: 0) // Different item in the same section
+
+        let size1 = CGSize(width: 10, height: 10)
+        let size2 = CGSize(width: 20, height: 20)
+
+        let testData = [
+            [
+                CellData(size: size1, color: .green),
+                CellData(size: size2, color: .purple)
+            ]
+        ]
+        setupSectionData(testData)
+
+        let expectedLabelText1 = "S\(indexPath1.section) I\(indexPath1.item) \(Int(size1.width))x\(Int(size1.height))"
+        let expectedLabelText2 = "S\(indexPath2.section) I\(indexPath2.item) \(Int(size2.width))x\(Int(size2.height))"
+
+        // Act
+        // 1. Get cell for the first index path
+        let cell1 = viewController.collectionView(collectionView, cellForItemAt: indexPath1)
+        let label1 = cell1.contentView.viewWithTag(labelTag) as? UILabel
+        let initialLabelObjectIdentifier = ObjectIdentifier(label1!) // Store identity of the first label
+
+        // 2. Simulate reuse by getting cell for the second index path.
+        //    UICollectionView might reuse the same cell instance or a different one.
+        //    The test focuses on the *logic within cellForItemAt* finding/updating the label.
+        let cell2 = viewController.collectionView(collectionView, cellForItemAt: indexPath2)
+        let label2 = cell2.contentView.viewWithTag(labelTag) as? UILabel
+
+        // Assert
+        XCTAssertNotNil(label1, "Label should exist for first cell")
+        XCTAssertEqual(label1?.text, expectedLabelText1, "Label text should match data for first index path")
+
+        XCTAssertNotNil(label2, "Label should exist for second cell (potentially reused)")
+        XCTAssertEqual(label2?.text, expectedLabelText2, "Label text should be updated for the second index path")
+
+        // Optional: If cell1 and cell2 happen to be the same instance (due to reuse simulation),
+        // check if the label object itself is the same instance, confirming reuse logic.
+        if cell1 === cell2 {
+             let finalLabelObjectIdentifier = ObjectIdentifier(label2!)
+             XCTAssertEqual(initialLabelObjectIdentifier, finalLabelObjectIdentifier, "Label instance should be reused if the cell instance is reused")
+        }
+    }
+}
