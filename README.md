@@ -1,17 +1,15 @@
 import UIKit
 
-// MARK: - Visibility Monitoring Protocol
 @MainActor
 protocol VisibilityMonitoring {
     func register(
-        view: UIView,
+        cell: VisibilityTrackableCell,
         identifier: AnyHashable,
         updateHandler: @escaping (CGFloat) -> Void
     )
     func unregister(identifier: AnyHashable)
 }
 
-// MARK: - Concrete Visibility Monitor (Singleton)
 @MainActor
 final class VisibilityMonitor: VisibilityMonitoring {
 
@@ -19,6 +17,8 @@ final class VisibilityMonitor: VisibilityMonitoring {
 
     private struct TrackingInfo {
         weak var view: UIView?
+        weak var trackingCell: UIView?
+        weak var scrollView: UIScrollView?
         let updateHandler: (CGFloat) -> Void
     }
 
@@ -29,11 +29,16 @@ final class VisibilityMonitor: VisibilityMonitoring {
     private init() { }
 
     func register(
-        view: UIView,
+        cell: VisibilityTrackableCell,
         identifier: AnyHashable,
         updateHandler: @escaping (CGFloat) -> Void
     ) {
-        trackedItems[identifier] = TrackingInfo(view: view, updateHandler: updateHandler)
+        trackedItems[identifier] = TrackingInfo(
+            view: cell.trackableViewForVisibility,
+            trackingCell: cell,
+            scrollView: cell.owningScrollViewForVisibilityCheck,
+            updateHandler: updateHandler
+        )
         if timer == nil {
             startTimer()
         }
@@ -79,23 +84,37 @@ final class VisibilityMonitor: VisibilityMonitoring {
        var results = [AnyHashable: CGFloat]()
 
        for (id, info) in itemsToCheck {
-            guard let view = info.view else {
+            guard let viewToTrack = info.view, let trackingCellAsView = info.trackingCell else {
                  continue
             }
-            if view.window == nil {
+
+            var isPotentiallyVisibleByScrollView = true
+            if let scrollView = info.scrollView {
+                if let tableView = scrollView as? UITableView, let cellInstance = trackingCellAsView as? UITableViewCell {
+                    if !tableView.visibleCells.contains(cellInstance) {
+                        isPotentiallyVisibleByScrollView = false
+                    }
+                } else if let collectionView = scrollView as? UICollectionView, let cellInstance = trackingCellAsView as? UICollectionViewCell {
+                    if !collectionView.visibleCells.contains(cellInstance) {
+                        isPotentiallyVisibleByScrollView = false
+                    }
+                }
+            }
+
+            if !isPotentiallyVisibleByScrollView || viewToTrack.window == nil {
                  results[id] = 0.0
              } else {
-                results[id] = view.calculateVisiblePercentage()
+                results[id] = viewToTrack.calculateVisiblePercentage()
             }
         }
 
          for (id, percentage) in results {
-            if let info = trackedItems[id] {
-                 info.updateHandler(percentage)
+            if let currentInfo = trackedItems[id] {
+                 currentInfo.updateHandler(percentage)
              }
         }
 
-        trackedItems = trackedItems.filter { $1.view != nil }
+        trackedItems = trackedItems.filter { $1.view != nil && $1.trackingCell != nil }
 
         if trackedItems.isEmpty && timer != nil {
             stopTimer()
@@ -103,7 +122,6 @@ final class VisibilityMonitor: VisibilityMonitoring {
     }
 }
 
-// MARK: - UIView Extension for Visibility Calculation
 extension UIView {
    func calculateVisiblePercentage() -> CGFloat {
        guard !self.isHidden, self.alpha > 0, self.superview != nil, let window = self.window else {
@@ -138,28 +156,40 @@ extension UIView {
    }
 }
 
-// MARK: - Visibility Trackable Cell Protocol
 @MainActor
 protocol VisibilityTrackableCell: UIView {
     var trackableViewForVisibility: UIView { get }
     var visibilityTrackingIdentifier: AnyHashable? { get set }
+    var owningScrollViewForVisibilityCheck: UIScrollView? { get }
+
     func visibilityDidChange(percentage: CGFloat)
-    // Default implementations provided below
     func registerForVisibilityTrackingIfNeeded()
     func unregisterFromVisibilityTracking()
     func performPrepareForReuseTrackingCleanup()
     func performDidMoveToWindowTrackingCheck(window: UIWindow?)
 }
 
-// MARK: - Default Implementations for VisibilityTrackableCell
 extension VisibilityTrackableCell {
+
+    var owningScrollViewForVisibilityCheck: UIScrollView? {
+        var parent = self.superview
+        while parent != nil {
+            if let scrollView = parent as? UITableView {
+                return scrollView
+            }
+            if let scrollView = parent as? UICollectionView {
+                return scrollView
+            }
+            parent = parent?.superview
+        }
+        return nil
+    }
 
     func registerForVisibilityTrackingIfNeeded() {
         guard let id = visibilityTrackingIdentifier, self.window != nil else {
             return
         }
-        let targetView = self.trackableViewForVisibility
-        VisibilityMonitor.shared.register(view: targetView, identifier: id) { [weak self] percentage in
+        VisibilityMonitor.shared.register(cell: self, identifier: id) { [weak self] percentage in
             self?.visibilityDidChange(percentage: percentage)
         }
     }
@@ -183,7 +213,6 @@ extension VisibilityTrackableCell {
     }
 }
 
-// MARK: - Example TableViewCell
 class MyTrackableTableCell: UITableViewCell, VisibilityTrackableCell {
 
     var trackableViewForVisibility: UIView {
@@ -249,7 +278,6 @@ class MyTrackableTableCell: UITableViewCell, VisibilityTrackableCell {
     }
 }
 
-// MARK: - Example CollectionViewCell
 class MyTrackableCollectionCell: UICollectionViewCell, VisibilityTrackableCell {
 
     var trackableViewForVisibility: UIView { return self.mainImageView }
