@@ -6,22 +6,31 @@ final class VisibilityMonitor {
     static let shared = VisibilityMonitor()
 
     private struct TrackingInfo {
-        weak var view: UIView?
+        weak var view: UIView?               // The target view to calculate visibility for
+        weak var parentCell: UIView?         // The UITableViewCell or UICollectionViewCell hosting the view
+        weak var parentScrollView: UIScrollView? // The UITableView or UICollectionView containing the cell
         let updateHandler: (CGFloat) -> Void
     }
 
     private var trackedItems = [AnyHashable: TrackingInfo]()
     private var timer: Timer?
-    private let checkInterval: TimeInterval = 0.2
+    private let checkInterval: TimeInterval = 0.2 // e.g., 200ms
 
-    private init() { }
+    private init() {}
 
     func register(
         view: UIView,
+        parentCell: UIView,
+        parentScrollView: UIScrollView?,
         identifier: AnyHashable,
         updateHandler: @escaping (CGFloat) -> Void
     ) {
-        trackedItems[identifier] = TrackingInfo(view: view, updateHandler: updateHandler)
+        trackedItems[identifier] = TrackingInfo(
+            view: view,
+            parentCell: parentCell,
+            parentScrollView: parentScrollView,
+            updateHandler: updateHandler
+        )
         if timer == nil {
             startTimer()
         }
@@ -44,7 +53,7 @@ final class VisibilityMonitor {
             userInfo: nil,
             repeats: true
         )
-        Task {
+        Task { // Perform an initial check
              await performVisibilityCheck()
          }
     }
@@ -60,30 +69,60 @@ final class VisibilityMonitor {
        }
     }
 
+    @MainActor
     private func performVisibilityCheck() async {
        guard !trackedItems.isEmpty else { return }
 
-       let itemsToCheck = trackedItems
-       var results = [AnyHashable: CGFloat]()
+       let itemsToCheck = trackedItems // Iterate on a copy if modification occurs during iteration
+       var resultsToNotify = [AnyHashable: CGFloat]()
 
        for (id, info) in itemsToCheck {
-            guard let view = info.view else {
-                 continue
+            guard let targetView = info.view, let hostingCell = info.parentCell else {
+                resultsToNotify[id] = 0.0 // View or cell gone, ensure handler gets 0
+                continue
             }
-            if view.window == nil {
-                 results[id] = 0.0
-             } else {
-                results[id] = view.calculateVisiblePercentage()
+
+            var isParentCellEffectivelyVisible = true // Assume visible
+
+            // Optimization: Check if the hosting cell is among the *visible* cells of its parent scroll view
+            if let tableView = info.parentScrollView as? UITableView {
+                if !tableView.visibleCells.contains(where: { $0 === hostingCell }) {
+                    isParentCellEffectivelyVisible = false
+                }
+            } else if let collectionView = info.parentScrollView as? UICollectionView {
+                if !collectionView.visibleCells.contains(where: { $0 === hostingCell }) {
+                    isParentCellEffectivelyVisible = false
+                }
+            } else {
+                // Not a UITableView or UICollectionView, or no parentScrollView.
+                // Fallback to just checking if the target view is in a window.
+                if targetView.window == nil {
+                     isParentCellEffectivelyVisible = false
+                }
+            }
+
+
+            if !isParentCellEffectivelyVisible {
+                resultsToNotify[id] = 0.0 // If parent cell isn't visible, the view inside isn't either
+            } else {
+                // Parent cell is visible (or check is not applicable), proceed with geometry calculation
+                // Final check for window, in case parentScrollView checks didn't cover it
+                if targetView.window == nil {
+                    resultsToNotify[id] = 0.0
+                } else {
+                    resultsToNotify[id] = targetView.calculateVisiblePercentage()
+                }
             }
         }
 
-         for (id, percentage) in results {
-            if let info = trackedItems[id] {
+         for (id, percentage) in resultsToNotify {
+            if let info = trackedItems[id] { // Re-fetch in case it was unregistered during awaits
                  info.updateHandler(percentage)
              }
         }
 
-        trackedItems = trackedItems.filter { $1.view != nil }
+        // Clean up items where the view or parentCell has been deallocated
+        trackedItems = trackedItems.filter { $1.view != nil && $1.parentCell != nil }
 
         if trackedItems.isEmpty && timer != nil {
             stopTimer()
@@ -130,6 +169,8 @@ protocol VisibilityTrackableCell: UIView {
     var trackableViewForVisibility: UIView { get }
     var visibilityTrackingIdentifier: AnyHashable? { get set }
     func visibilityDidChange(percentage: CGFloat)
+
+    // Default implemented methods
     func registerForVisibilityTrackingIfNeeded()
     func unregisterFromVisibilityTracking()
     func performPrepareForReuseTrackingCleanup()
@@ -138,12 +179,34 @@ protocol VisibilityTrackableCell: UIView {
 
 extension VisibilityTrackableCell {
 
+    // Helper to find the parent UITableView or UICollectionView
+    private func findParentTrackableScrollView() -> UIScrollView? {
+        var responder: UIResponder? = self
+        while let currentResponder = responder {
+            if let tableView = currentResponder as? UITableView {
+                return tableView
+            }
+            if let collectionView = currentResponder as? UICollectionView {
+                return collectionView
+            }
+            responder = currentResponder.next
+        }
+        return nil
+    }
+
     func registerForVisibilityTrackingIfNeeded() {
         guard let id = visibilityTrackingIdentifier, self.window != nil else {
             return
         }
         let targetView = self.trackableViewForVisibility
-        VisibilityMonitor.shared.register(view: targetView, identifier: id) { [weak self] percentage in
+        let parentScrollView = self.findParentTrackableScrollView()
+
+        VisibilityMonitor.shared.register(
+            view: targetView,
+            parentCell: self, // 'self' is the VisibilityTrackableCell instance
+            parentScrollView: parentScrollView,
+            identifier: id
+        ) { [weak self] percentage in
             self?.visibilityDidChange(percentage: percentage)
         }
     }
@@ -167,52 +230,42 @@ extension VisibilityTrackableCell {
     }
 }
 
+// Example UITableViewCell
 class MyTrackableTableCell: UITableViewCell, VisibilityTrackableCell {
 
     var trackableViewForVisibility: UIView {
         return self.specificView
     }
-
     var visibilityTrackingIdentifier: AnyHashable?
 
-    let specificView: UIView = {
+    let specificView: UIView = { /* ... setup ... */
         let view = UIView()
-        view.backgroundColor = .systemTeal
+        view.backgroundColor = .systemIndigo
         view.translatesAutoresizingMaskIntoConstraints = false
-        view.layer.cornerRadius = 5
-        view.layer.borderWidth = 0
-        view.clipsToBounds = true
         return view
     }()
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
-        setupInternalView()
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    private func setupInternalView() {
         contentView.addSubview(specificView)
-        NSLayoutConstraint.activate([
+        NSLayoutConstraint.activate([ // Basic constraints
             specificView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 10),
             specificView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -10),
             specificView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 5),
-            specificView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -5),
-            specificView.heightAnchor.constraint(equalToConstant: 50)
+            specificView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -5)
         ])
     }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func configureCell(dataId: String) {
         self.visibilityTrackingIdentifier = dataId
-        visibilityDidChange(percentage: 0)
+        visibilityDidChange(percentage: 0) // Reset visual state
     }
 
     override func prepareForReuse() {
         super.prepareForReuse()
         performPrepareForReuseTrackingCleanup()
     }
-
     override func didMoveToWindow() {
         super.didMoveToWindow()
         performDidMoveToWindowTrackingCheck(window: self.window)
@@ -220,58 +273,45 @@ class MyTrackableTableCell: UITableViewCell, VisibilityTrackableCell {
 
     @MainActor
     func visibilityDidChange(percentage: CGFloat) {
-        let alpha = max(0.2, CGFloat(percentage))
-        let borderColor: UIColor = percentage > 0.5 ? .red : (percentage > 0 ? .yellow : .clear)
-        let borderWidth: CGFloat = percentage > 0.5 ? 2.0 : (percentage > 0 ? 1.0 : 0.0)
-
-        UIView.animate(withDuration: 0.15) {
-             self.specificView.alpha = alpha
-             self.specificView.layer.borderColor = borderColor.cgColor
-             self.specificView.layer.borderWidth = borderWidth
-        }
+        // Update cell UI based on percentage
+        self.specificView.alpha = max(0.1, percentage) // Example update
+        self.specificView.layer.borderColor = percentage > 0.5 ? UIColor.green.cgColor : UIColor.clear.cgColor
+        self.specificView.layer.borderWidth = percentage > 0.5 ? 2.0 : 0.0
     }
 }
 
+// Example UICollectionViewCell (structure is very similar to UITableViewCell example)
 class MyTrackableCollectionCell: UICollectionViewCell, VisibilityTrackableCell {
-
-    var trackableViewForVisibility: UIView { return self.mainImageView }
-
+    var trackableViewForVisibility: UIView { return self.mainContent }
     var visibilityTrackingIdentifier: AnyHashable?
-
-    let mainImageView: UIImageView = {
-        let iv = UIImageView()
-        iv.contentMode = .scaleAspectFill
-        iv.clipsToBounds = true
-        iv.translatesAutoresizingMaskIntoConstraints = false
-        iv.layer.borderWidth = 0
-        iv.backgroundColor = .lightGray
-        return iv
+    let mainContent: UIView = { /* ... setup ... */
+        let view = UIView()
+        view.backgroundColor = .systemOrange
+        view.translatesAutoresizingMaskIntoConstraints = false
+        return view
     }()
 
-     override init(frame: CGRect) {
+    override init(frame: CGRect) {
         super.init(frame: frame)
-        contentView.addSubview(mainImageView)
-        NSLayoutConstraint.activate([
-            mainImageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            mainImageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            mainImageView.topAnchor.constraint(equalTo: contentView.topAnchor),
-            mainImageView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+        contentView.addSubview(mainContent)
+        NSLayoutConstraint.activate([ // Basic constraints
+            mainContent.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            mainContent.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            mainContent.topAnchor.constraint(equalTo: contentView.topAnchor),
+            mainContent.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
         ])
     }
-
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func configureCell(imageId: Int) {
-        self.visibilityTrackingIdentifier = imageId
-        visibilityDidChange(percentage: 0)
+    func configureCell(contentId: String) {
+        self.visibilityTrackingIdentifier = contentId
+        visibilityDidChange(percentage: 0) // Reset visual state
     }
 
     override func prepareForReuse() {
         super.prepareForReuse()
         performPrepareForReuseTrackingCleanup()
-        mainImageView.image = nil
     }
-
     override func didMoveToWindow() {
         super.didMoveToWindow()
         performDidMoveToWindowTrackingCheck(window: self.window)
@@ -279,12 +319,8 @@ class MyTrackableCollectionCell: UICollectionViewCell, VisibilityTrackableCell {
 
     @MainActor
     func visibilityDidChange(percentage: CGFloat) {
-        let scale: CGFloat = 0.8 + (0.2 * percentage)
-        mainImageView.layer.borderColor = percentage > 0.6 ? UIColor.blue.cgColor : UIColor.clear.cgColor
-        mainImageView.layer.borderWidth = percentage > 0.6 ? 3.0 : 0.0
-
-        UIView.animate(withDuration: 0.1) {
-            self.mainImageView.transform = CGAffineTransform(scaleX: scale, y: scale)
-        }
+        self.mainContent.transform = percentage > 0.7 ? CGAffineTransform(scaleX: 1.05, y: 1.05) : .identity
+        self.mainContent.layer.shadowOpacity = percentage > 0.3 ? 0.3 : 0.0
+        self.mainContent.layer.shadowRadius = percentage > 0.3 ? 5 : 0
     }
 }
