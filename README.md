@@ -122,38 +122,58 @@ final class VisibilityMonitor: VisibilityMonitoring {
     }
 }
 
+import UIKit
+
+extension CGRect {
+    func isNullOrEmpty() -> Bool {
+        return self.isNull || self.width <= 0 || self.height <= 0
+    }
+}
+
 extension UIView {
-   func calculateVisiblePercentage() -> CGFloat {
-       guard !self.isHidden, self.alpha > 0, self.superview != nil, let window = self.window else {
-           return 0.0
-       }
+    func calculateVisiblePercentage() -> CGFloat {
+        guard !self.isHidden,
+              self.alpha > 0,
+              self.superview != nil,
+              let window = self.window
+        else {
+            return 0.0
+        }
 
-       let frameInWindow = self.convert(self.bounds, to: window)
-       let windowBounds = window.bounds
-       var visibleRectInWindow = frameInWindow.intersection(windowBounds)
+        let frameInWindow = self.convert(self.bounds, to: window)
 
-       if visibleRectInWindow.isNull || visibleRectInWindow.width <= 0 || visibleRectInWindow.height <= 0 {
-           return 0.0
-       }
+        let windowBounds = window.bounds
 
-       var currentSuperview = self.superview
-       while let superview = currentSuperview, superview != window {
+        var visibleRectInWindow = frameInWindow.intersection(windowBounds)
+
+        if visibleRectInWindow.isNullOrEmpty() {
+            return 0.0
+        }
+
+        var currentSuperview = self.superview
+        while let superview = currentSuperview, superview != window {
             if superview.clipsToBounds {
-                 let superviewBoundsInWindow = superview.convert(superview.bounds, to: window)
+                let superviewBoundsInWindow = superview.convert(superview.bounds, to: window)
+                
                 visibleRectInWindow = visibleRectInWindow.intersection(superviewBoundsInWindow)
-                if visibleRectInWindow.isNull || visibleRectInWindow.width <= 0 || visibleRectInWindow.height <= 0 {
+                
+                if visibleRectInWindow.isNullOrEmpty() {
                     return 0.0
                 }
             }
             currentSuperview = superview.superview
-       }
+        }
 
-       let originalArea = self.bounds.width * self.bounds.height
-       guard originalArea > 0 else { return 0.0 }
+        let originalArea = self.bounds.width * self.bounds.height
+        
+        guard originalArea > 0 else {
+            return 0.0
+        }
 
-       let visibleArea = visibleRectInWindow.width * visibleRectInWindow.height
-       return max(0.0, min(1.0, visibleArea / originalArea))
-   }
+        let visibleArea = visibleRectInWindow.width * visibleRectInWindow.height
+        
+        return max(0.0, min(1.0, visibleArea / originalArea))
+    }
 }
 
 @MainActor
