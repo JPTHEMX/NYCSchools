@@ -1,4 +1,3 @@
-// MARK: - UIView Extensions
 extension UIView {
     var firstViewController: UIViewController? {
         var responder: UIResponder? = self
@@ -35,7 +34,11 @@ extension UIView {
         return false
     }
 
-    func isActuallyVisibleInWindowHierarchy(consideringOcclusion: Bool = true, inContextOf cachedWindow: UIWindow?) -> Bool {
+    func isActuallyVisibleInWindowHierarchy(
+        consideringOcclusion: Bool = true,
+        inContextOf cachedWindow: UIWindow?,
+        collectionViewOwningVC: UIViewController? = nil
+    ) -> Bool {
         guard let window = cachedWindow ?? self.window, !self.isHidden, self.alpha > 0, self.superview != nil else {
             return false
         }
@@ -59,12 +62,34 @@ extension UIView {
         if consideringOcclusion {
             let myFrameInWindow = self.convert(self.bounds, to: window)
             if myFrameInWindow.isNull || myFrameInWindow.isEmpty { return false }
-
+            
+            // Intento de optimización: Chequear primero el VC más alto presentado
+            if let rootVC = window.rootViewController {
+                var topMostVC = rootVC
+                while let presented = topMostVC.presentedViewController {
+                    topMostVC = presented
+                }
+                if topMostVC != rootVC && // Si hay un VC presentado modalmente
+                   topMostVC != collectionViewOwningVC && // Y no es el VC dueño de nuestra collection view
+                   topMostVC.view.window == window {
+                    let occluderFrameInWindow = topMostVC.view.convert(topMostVC.view.bounds, to: window)
+                    if myFrameInWindow.intersects(occluderFrameInWindow) {
+                         // Una comprobación más fina podría ser si intersection.equalTo(myFrameInWindow)
+                         // Pero para page sheets, una intersección parcial ya ocluye
+                        return false
+                    }
+                }
+            }
+            // Si la comprobación anterior no fue concluyente, recurrir a la búsqueda más general (si se decide mantener)
+            // Esta parte es costosa y podría simplificarse o eliminarse si la comprobación del topMostVC es suficiente.
+            /*
             for rootViewCandidate in window.subviews {
                 var isAncestorOrSelfVCView = false
                 var testView: UIView? = self
+                let selfOwningVC = collectionViewOwningVC ?? self.firstViewController
+
                 while let tv = testView {
-                    if tv === rootViewCandidate || tv.firstViewController?.view === rootViewCandidate {
+                    if tv === rootViewCandidate || selfOwningVC?.view === rootViewCandidate {
                         isAncestorOrSelfVCView = true
                         break
                     }
@@ -76,6 +101,7 @@ extension UIView {
                     return false
                 }
             }
+            */
         }
         return true
     }
@@ -205,6 +231,7 @@ class VisibilityMonitor {
     private var lastReportedPercentages: [IndexPath: CGFloat] = [:]
     private weak var cachedWindow: UIWindow?
     private var cachedSafeAreaAwareBounds: CGRect = .zero
+    private weak var cachedOwningViewController: UIViewController?
 
     deinit {
         let timerToInvalidateOnDeinit = visibilityTimer
@@ -240,6 +267,7 @@ class VisibilityMonitor {
             self.visibilityTimer = nil
             self.lastReportedPercentages.removeAll()
             self.cachedWindow = nil
+            self.cachedOwningViewController = nil
             self.startNewTimerAndObservers()
         }
     }
@@ -254,6 +282,7 @@ class VisibilityMonitor {
             self.removeNotificationObserversInternal()
             self.lastReportedPercentages.removeAll()
             self.cachedWindow = nil
+            self.cachedOwningViewController = nil
         }
     }
     
@@ -329,6 +358,7 @@ class VisibilityMonitor {
               strongScrollView.superview != nil
         else {
             self.cachedWindow = nil
+            self.cachedOwningViewController = nil
             return
         }
 
@@ -336,8 +366,14 @@ class VisibilityMonitor {
             self.cachedWindow = window
             self.cachedSafeAreaAwareBounds = window.bounds.inset(by: window.safeAreaInsets)
         }
+        
+        if self.cachedOwningViewController == nil || self.cachedOwningViewController?.view !== strongScrollView.firstViewController?.view {
+            self.cachedOwningViewController = strongScrollView.firstViewController
+        }
+
         let currentCachedWindow = self.cachedWindow
         let currentSafeAreaAwareBounds = self.cachedSafeAreaAwareBounds
+        let currentOwningVC = self.cachedOwningViewController
         
         switch strongScrollView {
         case let collectionView as UICollectionView:
@@ -349,7 +385,11 @@ class VisibilityMonitor {
                 
                 guard let indexPath = collectionView.indexPath(for: cell) else { continue }
 
-                if !cell.isActuallyVisibleInWindowHierarchy(consideringOcclusion: true, inContextOf: currentCachedWindow) {
+                if !cell.isActuallyVisibleInWindowHierarchy(
+                    consideringOcclusion: true,
+                    inContextOf: currentCachedWindow,
+                    collectionViewOwningVC: currentOwningVC
+                ) {
                     let previousPercentage = self.lastReportedPercentages[indexPath] ?? -1.0
                     if previousPercentage != 0.0 {
                         self.delegate?.collectionView(collectionView,
@@ -363,7 +403,7 @@ class VisibilityMonitor {
 
                 if let targetContainer = cell as? TargetImageViewContainer,
                    let imageViewToTrack = targetContainer.targetImageView,
-                   let validWindow = currentCachedWindow { // Ensure window is valid
+                   let validWindow = currentCachedWindow {
                     
                     guard self.isActive, self.visibilityTimer?.isValid == true else { break }
                     
