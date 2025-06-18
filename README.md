@@ -1,4 +1,17 @@
-Regarding automatic cell/header sizing:
-In iOS 15 and 16, Apple's provided automatic calculation can be fragile and prone to crashes. This exposes us to OS-level bugs that are difficult to debug and control.
-We also explored another feasible automatic calculation solution, which is possible but computationally expensive, especially during scrolling. It would require caching, which seems like an unnecessary overhead, though it is functional.
-I've reviewed this, and I believe I can make changes in the ViewModel to calculate the header height there. I'm still testing this approach, but it appears to be feasible."
+func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, referenceSizeForHeaderInSection section: Int) -> CGSize {
+        // 1. Obtiene los datos para la sección actual.
+        let data = sections[section]
+        
+        // 2. Configura el header de cálculo con esos datos.
+        sizingHeader.configure(logo: nil, title: data.title, subtitle: data.subtitle)
+        
+        // 3. El resto de la lógica de cálculo es IDÉNTICA. Funciona para cualquier vista.
+        let targetSize = CGSize(width: collectionView.bounds.width, height: UIView.layoutFittingCompressedSize.height)
+        let calculatedSize = sizingHeader.systemLayoutSizeFitting(
+            targetSize,
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        
+        return calculatedSize
+    }
