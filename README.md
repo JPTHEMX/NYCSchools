@@ -1,18 +1,122 @@
 import UIKit
 
-class AdaptiveFlowLayout: UICollectionViewFlowLayout {
+@MainActor
+protocol DynamicFontScaling: AnyObject {
+    var font: UIFont! { get set }
+    var baseFont: UIFont! { get set }
+    var textStyle: UIFont.TextStyle! { get set }
+    func updateFont()
+}
 
-    override func shouldInvalidateLayout(forBoundsChange newBounds: CGRect) -> Bool {
-        guard let oldBounds = collectionView?.bounds else {
-            return false
-        }
+extension DynamicFontScaling {
+    func updateFont() {
+        guard let baseFont = self.baseFont, let textStyle = self.textStyle else { return }
         
-        if oldBounds.width != newBounds.width {
-            return true
-        }
-        
-        return false
+        let metrics = UIFontMetrics(forTextStyle: textStyle)
+        self.font = metrics.scaledFont(for: baseFont)
     }
+}
+
+
+import UIKit
+
+class ScalableLabel: UILabel, DynamicFontScaling {
+    
+    var baseFont: UIFont!
+    var textStyle: UIFont.TextStyle!
+    
+    func configure(with font: UIFont, forTextStyle textStyle: UIFont.TextStyle, textColor: UIColor = .label) {
+        self.translatesAutoresizingMaskIntoConstraints = false
+        self.baseFont = font
+        self.textStyle = textStyle
+        self.numberOfLines = 0
+        self.textColor = textColor
+        self.adjustsFontForContentSizeCategory = true
+        updateFont()
+    }
+    
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        updateFont()
+    }
+}
+
+
+import UIKit
+
+class ScalableButton: UIButton, DynamicFontScaling {
+    
+    var font: UIFont! {
+        get {
+            return self.configuration?.titleTextAttributesTransformer?(.init()).font
+        }
+        set {
+            self.configuration?.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+                var outgoing = incoming
+                outgoing.font = newValue
+                return outgoing
+            }
+        }
+    }
+    
+    var baseFont: UIFont!
+    var textStyle: UIFont.TextStyle!
+    
+    func configure(with font: UIFont, forTextStyle textStyle: UIFont.TextStyle) {
+        self.translatesAutoresizingMaskIntoConstraints = false
+        self.baseFont = font
+        self.textStyle = textStyle
+        self.titleLabel?.adjustsFontForContentSizeCategory = true
+        self.titleLabel?.numberOfLines = 0
+        updateFont()
+    }
+    
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        updateFont()
+    }
+}
+
+import UIKit
+
+class GradientView: UIView {
+    let gradientLayer = CAGradientLayer()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        layer.addSublayer(gradientLayer)
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        gradientLayer.frame = self.bounds
+    }
+}
+
+import UIKit
+
+class BaseCollectionViewCell: UICollectionViewCell {
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setupUI()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func setupUI() {
+        self.contentView.backgroundColor = .clear
+        self.contentView.layer.borderColor = UIColor.gray.withAlphaComponent(0.2).cgColor
+        self.contentView.layer.borderWidth = 1.0
+        self.contentView.clipsToBounds = true
+        self.contentView.layer.cornerRadius = 8.0
+    }
+    
 }
 
 import UIKit
@@ -53,43 +157,6 @@ class GridCell: UICollectionViewCell {
 
 import UIKit
 
-class GradientView: UIView {
-    let gradientLayer = CAGradientLayer()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        layer.addSublayer(gradientLayer)
-    }
-    
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-    
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        gradientLayer.frame = self.bounds
-    }
-}
-
-class BaseCollectionViewCell: UICollectionViewCell {
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        setupUI()
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func setupUI() {
-        self.contentView.backgroundColor = .clear
-        self.contentView.layer.borderColor = UIColor.gray.withAlphaComponent(0.2).cgColor
-        self.contentView.layer.borderWidth = 1.0
-        self.contentView.clipsToBounds = true
-        self.contentView.layer.cornerRadius = 8.0
-    }
-}
-
 class TextCell: BaseCollectionViewCell {
     
     static let reuseIdentifier = "TextCell"
@@ -99,6 +166,9 @@ class TextCell: BaseCollectionViewCell {
         var description: String?
         var buttonTitle: String?
         var imageName: String?
+        var titleFont: UIFont
+        var descriptionFont: UIFont
+        var buttonFont: UIFont
     }
     
     var onButtonTapped: (() -> Void)?
@@ -121,45 +191,9 @@ class TextCell: BaseCollectionViewCell {
         return view
     }()
     
-    lazy var titleLabel: UILabel = {
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.numberOfLines = 0
-        label.font = UIFont.preferredFont(forTextStyle: .headline)
-        label.textColor = .white
-        label.adjustsFontForContentSizeCategory = true
-        return label
-    }()
-
-    lazy var descriptionLabel: UILabel = {
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.numberOfLines = 0
-        label.font = UIFont.preferredFont(forTextStyle: .subheadline)
-        label.textColor = .white.withAlphaComponent(0.9)
-        label.adjustsFontForContentSizeCategory = true
-        return label
-    }()
-
-    private lazy var actionButton: UIButton = {
-        var config = UIButton.Configuration.filled()
-        config.cornerStyle = .medium
-        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
-            var outgoing = incoming
-            outgoing.font = UIFont.preferredFont(forTextStyle: .callout)
-            return outgoing
-        }
-        
-        let button = UIButton(configuration: config)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.isUserInteractionEnabled = true
-        button.addTarget(self, action: #selector(didTapButton), for: .touchUpInside)
-        return button
-    }()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-    }
+    private lazy var titleLabel = ScalableLabel()
+    private lazy var descriptionLabel = ScalableLabel()
+    private lazy var actionButton = ScalableButton()
     
     override func setupUI() {
         super.setupUI()
@@ -169,6 +203,12 @@ class TextCell: BaseCollectionViewCell {
         contentView.addSubview(titleLabel)
         contentView.addSubview(descriptionLabel)
         contentView.addSubview(actionButton)
+        
+        var config = UIButton.Configuration.filled()
+        config.cornerStyle = .medium
+        actionButton.configuration = config
+        actionButton.isUserInteractionEnabled = true
+        actionButton.addTarget(self, action: #selector(didTapButton), for: .touchUpInside)
         
         let padding: CGFloat = 16
         
@@ -181,36 +221,34 @@ class TextCell: BaseCollectionViewCell {
             gradientView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             gradientView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             gradientView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-        ])
-        
-        NSLayoutConstraint.activate([
+            
             titleLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: padding),
             titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: padding),
             titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -padding),
+            
             descriptionLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
             descriptionLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: padding),
             descriptionLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -padding),
-            actionButton.topAnchor.constraint(equalTo: descriptionLabel.bottomAnchor, constant: 12),
+            
+            actionButton.topAnchor.constraint(greaterThanOrEqualTo: descriptionLabel.bottomAnchor, constant: 12),
             actionButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: padding),
             actionButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -padding),
             actionButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -padding)
         ])
     }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        let availableWidth = contentView.bounds.width - 32
-        titleLabel.preferredMaxLayoutWidth = availableWidth
-        descriptionLabel.preferredMaxLayoutWidth = availableWidth
-    }
     
     func configure(with model: Model) {
+        titleLabel.configure(with: model.titleFont, forTextStyle: .headline, textColor: .white)
+        descriptionLabel.configure(with: model.descriptionFont, forTextStyle: .subheadline, textColor: .white.withAlphaComponent(0.9))
+        actionButton.configure(with: model.buttonFont, forTextStyle: .callout)
+        
         titleLabel.text = model.title
         descriptionLabel.text = model.description
         actionButton.configuration?.title = model.buttonTitle
-        if let imageName = model.imageName { backgroundImageView.image = UIImage(named: imageName) }
+        
+        if let imageName = model.imageName {
+            backgroundImageView.image = UIImage(named: imageName)
+        }
     }
     
     override func prepareForReuse() {
@@ -232,18 +270,15 @@ import UIKit
 class HeaderView: UICollectionReusableView {
     static let reuseIdentifier = "HeaderView"
 
-    let titleLabel: UILabel = {
-        let label = UILabel()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.preferredFont(forTextStyle: .headline)
-        label.adjustsFontForContentSizeCategory = true
-        label.numberOfLines = 0
-        return label
-    }()
+    private let titleLabel = ScalableLabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .systemBackground
+        
+        let headerFont = UIFont.systemFont(ofSize: 18, weight: .semibold)
+        titleLabel.configure(with: headerFont, forTextStyle: .headline)
+        
         addSubview(titleLabel)
         
         NSLayoutConstraint.activate([
@@ -273,7 +308,10 @@ class ViewController: UIViewController {
         title: "Discover Special Offers",
         description: "This is a sample text that spans multiple lines. Its size will change automatically when you adjust the accessibility settings on your device.",
         buttonTitle: "View Now",
-        imageName: "background-sample"
+        imageName: "background-sample",
+        titleFont: UIFont(name: "AvenirNext-Bold", size: 24) ?? .systemFont(ofSize: 24, weight: .bold),
+        descriptionFont: UIFont(name: "AvenirNext-Regular", size: 17) ?? .systemFont(ofSize: 17),
+        buttonFont: UIFont(name: "AvenirNext-DemiBold", size: 16) ?? .systemFont(ofSize: 16, weight: .semibold)
     )
 
     var collectionView: UICollectionView!
@@ -290,13 +328,18 @@ class ViewController: UIViewController {
         
         setupCollectionView()
         
-        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (self: Self, _: UITraitCollection) in
-            self.invalidateCachesAndLayout()
+        if #available(iOS 17.0, *) {
+            registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (self: Self, _: UITraitCollection) in
+                self.invalidateCachesAndLayout()
+            }
+        } else {
+            // Fallback on earlier versions
         }
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        
         if isFirstLayout {
             isFirstLayout = false
             collectionView.collectionViewLayout.invalidateLayout()
@@ -305,11 +348,14 @@ class ViewController: UIViewController {
     
     override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
         super.viewWillTransition(to: size, with: coordinator)
-        invalidateCachesAndLayout()
+        
+        coordinator.animate(alongsideTransition: nil) { [weak self] _ in
+            self?.invalidateCachesAndLayout()
+        }
     }
 
     private func setupCollectionView() {
-        let layout = AdaptiveFlowLayout()
+        let layout = UICollectionViewFlowLayout()
         
         collectionView = UICollectionView(frame: view.bounds, collectionViewLayout: layout)
         collectionView.translatesAutoresizingMaskIntoConstraints = false
@@ -397,15 +443,16 @@ extension ViewController: UICollectionViewDelegateFlowLayout {
             calculatedSize = CGSize(width: itemWidth, height: itemWidth)
         } else {
             let cell = TextCell()
-            cell.prepareForReuse()
             cell.configure(with: textCellModel)
             
             let targetWidth = collectionView.bounds.width - 32
+            cell.frame = CGRect(x: 0, y: 0, width: targetWidth, height: 1000)
+            cell.setNeedsLayout()
+            cell.layoutIfNeeded()
             
-            cell.titleLabel.preferredMaxLayoutWidth = targetWidth
-            cell.descriptionLabel.preferredMaxLayoutWidth = targetWidth
-            
-            calculatedSize = cell.contentView.systemLayoutSizeFitting(CGSize(width: targetWidth, height: UIView.layoutFittingCompressedSize.height))
+            calculatedSize = cell.contentView.systemLayoutSizeFitting(
+                CGSize(width: targetWidth, height: UIView.layoutFittingCompressedSize.height)
+            )
         }
         
         cellCache[indexPath] = calculatedSize
@@ -426,12 +473,14 @@ extension ViewController: UICollectionViewDelegateFlowLayout {
         header.configure(with: sectionHeaderTitle)
         
         let targetWidth = collectionView.bounds.width
-        
         header.frame = CGRect(x: 0, y: 0, width: targetWidth, height: 1000)
         header.setNeedsLayout()
         header.layoutIfNeeded()
         
-        let calculatedSize = header.systemLayoutSizeFitting(CGSize(width: targetWidth, height: UIView.layoutFittingCompressedSize.height))
+        let calculatedSize = header.systemLayoutSizeFitting(
+            CGSize(width: targetWidth, height: UIView.layoutFittingCompressedSize.height)
+        )
+        
         headerCache[indexPath] = calculatedSize
         return calculatedSize
     }
@@ -448,3 +497,5 @@ extension ViewController: UICollectionViewDelegateFlowLayout {
         return section == 0 ? 10 : 0
     }
 }
+
+
