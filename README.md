@@ -1,7 +1,5 @@
 import UIKit
 
-// MARK: - Modelo de Datos
-
 enum Section: Int, CaseIterable {
     case info
     case list
@@ -10,36 +8,33 @@ enum Section: Int, CaseIterable {
 struct ListItem: Hashable {
     let id: UUID
     let title: String
-
     init(title: String) {
         self.id = UUID()
         self.title = title
     }
-
     init(id: UUID, title: String) {
         self.id = id
         self.title = title
     }
-
-    // La identidad se basa solo en el ID, no en el título.
-    static func == (lhs: ListItem, rhs: ListItem) -> Bool {
-        return lhs.id == rhs.id
-    }
-
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-    }
+    static func == (lhs: ListItem, rhs: ListItem) -> Bool { lhs.id == rhs.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
 struct TabItem: Hashable {
     let title: String
 }
 
-// MARK: - TabCell
+protocol TabCellConfigurable: UICollectionViewCell {
+    associatedtype Item: Hashable
+    func configure(with item: Item)
+    var a11yTitle: String? { get }
+    static var reuseIdentifier: String { get }
+}
 
-class TabCell: UICollectionViewCell {
+class TabCell: UICollectionViewCell, TabCellConfigurable {
     static let reuseIdentifier = "TabCell"
-
+    typealias Item = TabItem
+    var a11yTitle: String? { return titleLabel.text }
     let titleLabel: UILabel = {
         let label = UILabel()
         label.font = UIFont.preferredFont(forTextStyle: .headline)
@@ -48,22 +43,12 @@ class TabCell: UICollectionViewCell {
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
     }()
-
-    override var isSelected: Bool {
-        didSet {
-            titleLabel.textColor = isSelected ? .systemBlue : .label
-        }
-    }
-
+    override var isSelected: Bool { didSet { titleLabel.textColor = isSelected ? .systemBlue : .label } }
     override init(frame: CGRect) {
         super.init(frame: frame)
         setupViews()
     }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     private func setupViews() {
         contentView.addSubview(titleLabel)
         NSLayoutConstraint.activate([
@@ -73,14 +58,10 @@ class TabCell: UICollectionViewCell {
             titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
         ])
     }
-
-    func configure(with title: String) {
-        titleLabel.text = title
+    func configure(with item: TabItem) {
+        titleLabel.text = item.title
     }
 }
-
-
-// MARK: - TabBarView
 
 @MainActor
 protocol TabBarViewDelegate: AnyObject {
@@ -88,22 +69,21 @@ protocol TabBarViewDelegate: AnyObject {
     func tabBarViewRequiresLayoutUpdate()
 }
 
-class TabBarView: UIView {
+private enum TabBarViewConstants {
+    static let verticalPadding: CGFloat = 8.0
+    static let indicatorHeight: CGFloat = 5.0
+    static let indicatorBottomOffset: CGFloat = 3.0
+    static let bottomBorderHeight: CGFloat = 0.5
+}
 
-    private enum Constants {
-        static let verticalPadding: CGFloat = 8.0
-        static let indicatorHeight: CGFloat = 5.0
-        static let indicatorBottomOffset: CGFloat = 3.0
-        static let bottomBorderHeight: CGFloat = 0.5
-    }
-
+class TabBarView<Item: Hashable&Sendable, Cell: TabCellConfigurable>: UIView, UICollectionViewDelegate where Cell.Item == Item {
     enum TabSection { case main }
     weak var delegate: TabBarViewDelegate?
     private var selectedTabIndex: Int = 0
 
     override var intrinsicContentSize: CGSize {
         let fontHeight = UIFont.preferredFont(forTextStyle: .headline).lineHeight
-        let totalHeight = fontHeight + (Constants.verticalPadding * 2) + Constants.bottomBorderHeight
+        let totalHeight = fontHeight + (TabBarViewConstants.verticalPadding * 2) + TabBarViewConstants.bottomBorderHeight
         return CGSize(width: UIView.noIntrinsicMetric, height: totalHeight)
     }
 
@@ -112,23 +92,21 @@ class TabBarView: UIView {
         layout.scrollDirection = .horizontal
         layout.estimatedItemSize = UICollectionViewFlowLayout.automaticSize
         layout.sectionInset = .zero
-        let collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
-        collectionView.showsHorizontalScrollIndicator = false
-        collectionView.delegate = self
-        collectionView.register(TabCell.self, forCellWithReuseIdentifier: TabCell.reuseIdentifier)
-        collectionView.translatesAutoresizingMaskIntoConstraints = false
-        collectionView.clipsToBounds = false
-        collectionView.backgroundColor = .clear
-        return collectionView
+        let cv = UICollectionView(frame: .zero, collectionViewLayout: layout)
+        cv.showsHorizontalScrollIndicator = false
+        cv.delegate = self
+        cv.register(Cell.self, forCellWithReuseIdentifier: Cell.reuseIdentifier)
+        cv.translatesAutoresizingMaskIntoConstraints = false
+        cv.clipsToBounds = false
+        cv.backgroundColor = .clear
+        return cv
     }()
-
-    private var dataSource: UICollectionViewDiffableDataSource<TabSection, TabItem>!
+    private var dataSource: UICollectionViewDiffableDataSource<TabSection, Item>!
     private let indicatorView: UIView = {
         let view = UIView()
         view.backgroundColor = .systemBlue
         return view
     }()
-    
     private let bottomBorderView: UIView = {
         let view = UIView()
         view.backgroundColor = .systemGray
@@ -142,30 +120,21 @@ class TabBarView: UIView {
         configureDataSource()
         NotificationCenter.default.addObserver(self, selector: #selector(contentSizeCategoryDidChange), name: UIContentSizeCategory.didChangeNotification, object: nil)
     }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
+    deinit { NotificationCenter.default.removeObserver(self) }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     private func setupViews() {
         addSubview(collectionView)
         addSubview(bottomBorderView)
-        // El indicador es subvista del CollectionView para que se mueva con el scroll.
         collectionView.addSubview(indicatorView)
-
         NSLayoutConstraint.activate([
             collectionView.topAnchor.constraint(equalTo: self.topAnchor),
             collectionView.leadingAnchor.constraint(equalTo: self.leadingAnchor),
             collectionView.trailingAnchor.constraint(equalTo: self.trailingAnchor),
-
             bottomBorderView.topAnchor.constraint(equalTo: collectionView.bottomAnchor),
             bottomBorderView.leadingAnchor.constraint(equalTo: self.leadingAnchor),
             bottomBorderView.trailingAnchor.constraint(equalTo: self.trailingAnchor),
-            bottomBorderView.heightAnchor.constraint(equalToConstant: Constants.bottomBorderHeight),
+            bottomBorderView.heightAnchor.constraint(equalToConstant: TabBarViewConstants.bottomBorderHeight),
             bottomBorderView.bottomAnchor.constraint(equalTo: self.bottomAnchor)
         ])
     }
@@ -174,19 +143,17 @@ class TabBarView: UIView {
         super.layoutSubviews()
         updateIndicatorPosition(animated: false)
     }
-
     @objc private func contentSizeCategoryDidChange() {
         invalidateIntrinsicContentSize()
         delegate?.tabBarViewRequiresLayoutUpdate()
     }
 
-    func configure(with tabs: [TabItem], selectedIndex: Int) {
+    func configure(with items: [Item], selectedIndex: Int) {
         self.selectedTabIndex = selectedIndex
-        var snapshot = NSDiffableDataSourceSnapshot<TabSection, TabItem>()
+        var snapshot = NSDiffableDataSourceSnapshot<TabSection, Item>()
         snapshot.appendSections([.main])
-        snapshot.appendItems(tabs, toSection: .main)
+        snapshot.appendItems(items, toSection: .main)
         dataSource.apply(snapshot, animatingDifferences: false)
-
         DispatchQueue.main.async {
             let indexPath = IndexPath(item: selectedIndex, section: 0)
             self.collectionView.selectItem(at: indexPath, animated: false, scrollPosition: [])
@@ -194,154 +161,146 @@ class TabBarView: UIView {
             self.updateIndicatorPosition(animated: false)
         }
     }
-
     private func configureDataSource() {
         dataSource = .init(collectionView: collectionView) { [weak self] (cv, ip, item) -> UICollectionViewCell? in
-            guard let self = self, let cell = cv.dequeueReusableCell(withReuseIdentifier: TabCell.reuseIdentifier, for: ip) as? TabCell else {
-                return nil
-            }
-            cell.configure(with: item.title)
-            // Asegura que el estado visual de selección sea correcto al reciclar celdas.
+            guard let self = self, let cell = cv.dequeueReusableCell(withReuseIdentifier: Cell.reuseIdentifier, for: ip) as? Cell else { return nil }
+            cell.configure(with: item)
             cell.isSelected = (ip.item == self.selectedTabIndex)
             return cell
         }
     }
-
     private func updateIndicatorPosition(animated: Bool) {
         guard let attributes = collectionView.layoutAttributesForItem(at: IndexPath(item: selectedTabIndex, section: 0)) else {
             indicatorView.alpha = 0
             return
         }
         indicatorView.alpha = 1
-
-        let indicatorFrame = CGRect(
-            x: attributes.frame.origin.x,
-            y: attributes.frame.maxY - Constants.indicatorHeight + Constants.indicatorBottomOffset,
-            width: attributes.frame.width,
-            height: Constants.indicatorHeight
-        )
-
+        let indicatorFrame = CGRect(x: attributes.frame.origin.x, y: attributes.frame.maxY - TabBarViewConstants.indicatorHeight + TabBarViewConstants.indicatorBottomOffset, width: attributes.frame.width, height: TabBarViewConstants.indicatorHeight)
         let animation = { self.indicatorView.frame = indicatorFrame }
-        
         if animated {
-            UIView.animate(
-                withDuration: 0.3,
-                delay: 0,
-                usingSpringWithDamping: 0.8,
-                initialSpringVelocity: 0.1,
-                options: [.curveEaseInOut, .allowUserInteraction],
-                animations: animation
-            )
+            UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0.1, options: [.curveEaseInOut, .allowUserInteraction], animations: animation)
         } else {
             animation()
         }
     }
-
     private func scrollToMakeTabVisible(at indexPath: IndexPath, animated: Bool) {
-        guard let attributes = collectionView.layoutAttributesForItem(at: indexPath) else {
-            return
-        }
-        
+        guard let attributes = collectionView.layoutAttributesForItem(at: indexPath) else { return }
         let visibleRect = collectionView.bounds
-
-        // Si la celda ya está completamente contenida, no hacer nada.
-        if visibleRect.contains(attributes.frame) {
-            return
-        }
-        
-        // Decidir si alinear a la izquierda o a la derecha.
+        if visibleRect.contains(attributes.frame) { return }
         if attributes.frame.midX > visibleRect.midX {
             collectionView.scrollToItem(at: indexPath, at: .right, animated: animated)
         } else {
             collectionView.scrollToItem(at: indexPath, at: .left, animated: animated)
         }
     }
-}
-
-extension TabBarView: UICollectionViewDelegate {
+    
+    // MARK: - SOLUCIÓN -
+    // Pega este método corregido en tu clase TabBarView
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        guard selectedTabIndex != indexPath.item else {
-            return
-        }
-        
+        guard selectedTabIndex != indexPath.item else { return }
+
         let oldSelectedIndexPath = IndexPath(item: selectedTabIndex, section: 0)
         selectedTabIndex = indexPath.item
         
-        var snapshot = dataSource.snapshot()
-        let itemsToReconfigure = [
-            snapshot.itemIdentifiers[oldSelectedIndexPath.item],
-            snapshot.itemIdentifiers[indexPath.item]
-        ]
-        snapshot.reconfigureItems(itemsToReconfigure)
-        dataSource.apply(snapshot, animatingDifferences: false)
-        
+        // --- INICIO DE LA SOLUCIÓN ---
+        // Forzamos un pase de layout inmediato ANTES de las animaciones.
+        // Esto asegura que los atributos de layout (especialmente los tamaños de celda)
+        // para los elementos fuera de pantalla se calculen correctamente.
+        collectionView.setNeedsLayout()
+        collectionView.layoutIfNeeded()
+        // --- FIN DE LA SOLUCIÓN ---
+
         scrollToMakeTabVisible(at: indexPath, animated: true)
         updateIndicatorPosition(animated: true)
-        
+
         delegate?.tabBarView(didSelectTabAt: indexPath.item)
+        
+        var snapshot = dataSource.snapshot()
+        let items = snapshot.itemIdentifiers(inSection: .main)
+        if let oldItem = items[safe: oldSelectedIndexPath.item],
+           let newItem = items[safe: indexPath.item] {
+            let itemsToReconfigure = [oldItem, newItem]
+            snapshot.reconfigureItems(itemsToReconfigure)
+            dataSource.apply(snapshot, animatingDifferences: false)
+        }
     }
 }
 
 
-// MARK: - Adaptador para UITableView
-
-class TabBarTableViewHeader: UITableViewHeaderFooterView, TabBarViewDelegate {
-    static let reuseIdentifier = "TabBarTableViewHeader"
+class MainTabBarHeaderView: UITableViewHeaderFooterView, TabBarViewDelegate {
+    static let reuseIdentifier = "MainTabBarHeaderView"
     weak var delegate: TabBarViewDelegate?
-    private let tabBarView = TabBarView()
+    private let tabBarView = TabBarView<TabItem, TabCell>()
+    
+    private enum Constants {
+        static let portraitPadding: CGFloat = 16.0
+        static let landscapePadding: CGFloat = 32.0
+    }
     
     override init(reuseIdentifier: String?) {
         super.init(reuseIdentifier: reuseIdentifier)
         tabBarView.delegate = self
         setupSubviews()
+        updateHorizontalPadding()
     }
     
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
     
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.verticalSizeClass != previousTraitCollection?.verticalSizeClass {
+            updateHorizontalPadding()
+        }
+    }
+    
     private func setupSubviews() {
         contentView.backgroundColor = .systemBackground
         tabBarView.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(tabBarView)
+        
+        let margins = contentView.layoutMarginsGuide
         NSLayoutConstraint.activate([
             tabBarView.topAnchor.constraint(equalTo: contentView.topAnchor),
             tabBarView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            tabBarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            tabBarView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            tabBarView.leadingAnchor.constraint(equalTo: margins.leadingAnchor),
+            tabBarView.trailingAnchor.constraint(equalTo: margins.trailingAnchor)
         ])
+    }
+    
+    private func updateHorizontalPadding() {
+        let isLandscape = traitCollection.verticalSizeClass == .compact
+        let padding = isLandscape ? Constants.landscapePadding : Constants.portraitPadding
+        
+        contentView.directionalLayoutMargins = NSDirectionalEdgeInsets(
+            top: 0,
+            leading: padding,
+            bottom: 0,
+            trailing: padding
+        )
     }
     
     func configure(with tabs: [TabItem], selectedIndex: Int) {
         tabBarView.configure(with: tabs, selectedIndex: selectedIndex)
     }
     
-    func tabBarView(didSelectTabAt index: Int) {
-        delegate?.tabBarView(didSelectTabAt: index)
-    }
-    
-    func tabBarViewRequiresLayoutUpdate() {
-        delegate?.tabBarViewRequiresLayoutUpdate()
-    }
+    func tabBarView(didSelectTabAt index: Int) { delegate?.tabBarView(didSelectTabAt: index) }
+    func tabBarViewRequiresLayoutUpdate() { delegate?.tabBarViewRequiresLayoutUpdate() }
 }
 
-
-// MARK: - ViewController Principal
 
 @MainActor
 class ViewController: UIViewController {
 
     private var tableView: UITableView!
     private var dataSource: UITableViewDiffableDataSource<Section, ListItem>!
-    
     private let infoItemIdentifier = UUID()
-    private let tabData: [TabItem] = (0..<12).map { TabItem(title: "Categoría \($0 + 1)") }
+    private let tabData: [TabItem] = (0..<4).map { TabItem(title: "Categoría \($0 + 1)") }
     private var selectedTabIndex = 0
     private let infoTexts: [String] = [
-        "Esta es la celda de información en la Sección 0.",
-        "El texto ha sido actualizado. ¡Inténtalo de nuevo!",
-        "Aquí tienes un dato interesante sobre listas.",
-        "Puedes pulsar el botón de refrescar varias veces.",
+        "Esta es la celda de información en la Sección 0.", "El texto ha sido actualizado. ¡Inténtalo de nuevo!",
+        "Aquí tienes un dato interesante sobre listas.", "Puedes pulsar el botón de refrescar varias veces.",
         "Último mensaje antes de volver al principio."
     ]
     
@@ -354,30 +313,21 @@ class ViewController: UIViewController {
         configureDataSource()
         applyInitialData()
     }
-
+    
     private func configureNavigationBar() {
-        navigationItem.rightBarButtonItem = UIBarButtonItem(
-            image: UIImage(systemName: "arrow.clockwise"),
-            style: .plain,
-            target: self,
-            action: #selector(refreshContent)
-        )
+        navigationItem.rightBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "arrow.clockwise"), style: .plain, target: self, action: #selector(refreshContent))
     }
-
     private func configureTableView() {
         tableView = UITableView(frame: view.bounds, style: .plain)
-        if #available(iOS 15.0, *) {
-            tableView.sectionHeaderTopPadding = 0.0
-        }
+        if #available(iOS 15.0, *) { tableView.sectionHeaderTopPadding = 0.0 }
         tableView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         tableView.delegate = self
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "DefaultCell")
-        tableView.register(TabBarTableViewHeader.self, forHeaderFooterViewReuseIdentifier: TabBarTableViewHeader.reuseIdentifier)
+        tableView.register(MainTabBarHeaderView.self, forHeaderFooterViewReuseIdentifier: MainTabBarHeaderView.reuseIdentifier)
         tableView.sectionHeaderHeight = UITableView.automaticDimension
         tableView.estimatedSectionHeaderHeight = 50
         view.addSubview(tableView)
     }
-
     private func configureDataSource() {
         dataSource = UITableViewDiffableDataSource<Section, ListItem>(tableView: tableView) {
             (tableView, indexPath, item) -> UITableViewCell? in
@@ -388,7 +338,6 @@ class ViewController: UIViewController {
             return cell
         }
     }
-
     private func applyInitialData() {
         var snapshot = NSDiffableDataSourceSnapshot<Section, ListItem>()
         snapshot.appendSections([.info, .list])
@@ -396,87 +345,54 @@ class ViewController: UIViewController {
         snapshot.appendItems(generateItemsForTab(index: 0), toSection: .list)
         dataSource.apply(snapshot, animatingDifferences: false)
     }
-    
     private func updateContent() {
         var snapshot = dataSource.snapshot()
-        // Reconfigura la celda de información con el nuevo texto
-        snapshot.reconfigureItems([ListItem(id: infoItemIdentifier, title: infoTexts[selectedTabIndex % infoTexts.count])])
-        // Borra los items antiguos de la lista
+        let infoItems = snapshot.itemIdentifiers(inSection: .info)
+        snapshot.reconfigureItems(infoItems)
+        snapshot.itemIdentifiers(inSection: .list).forEach { snapshot.deleteItems([$0]) }
+        
+        if let currentInfoItem = infoItems.first(where: { $0.id == infoItemIdentifier }) {
+            var updatedInfoItem = ListItem(id: infoItemIdentifier, title: infoTexts[selectedTabIndex % infoTexts.count])
+            snapshot.reconfigureItems([updatedInfoItem])
+        }
+        
         snapshot.deleteItems(snapshot.itemIdentifiers(inSection: .list))
-        // Añade los nuevos items de la lista
         snapshot.appendItems(generateItemsForTab(index: selectedTabIndex), toSection: .list)
-        // Aplica todos los cambios a la vez y sin animaciones
+        
         dataSource.apply(snapshot, animatingDifferences: false)
     }
-
     private func generateItemsForTab(index: Int) -> [ListItem] {
-        return (1...100).map { ListItem(title: "Item \($0) de \(tabData[index].title)") }
+        let tabTitle = tabData[safe: index]?.title ?? ""
+        return (1...100).map { ListItem(title: "Item \($0) de \(tabTitle)") }
     }
-
     @objc private func refreshContent() {
-        // 1. Actualiza el estado del modelo a 0
         selectedTabIndex = 0
-        
-        // 2. Prepara una nueva instantánea para actualizar la UI.
-        // Obtenemos una copia del estado actual para modificarla.
-        var snapshot = dataSource.snapshot()
-        
-        // 3. Reconfigura la celda de información.
-        // Usamos el ID conocido para identificar el ítem. ListItem es hashable por su 'id'.
-        // El título aquí solo sirve para el contenido, no para la identificación.
-        snapshot.reconfigureItems([ListItem(id: infoItemIdentifier, title: infoTexts[0])])
-        
-        // 4. Actualiza los ítems de la lista para el tab 0.
-        snapshot.deleteItems(snapshot.itemIdentifiers(inSection: .list))
-        snapshot.appendItems(generateItemsForTab(index: selectedTabIndex), toSection: .list)
-        
-        // 5. ¡LA SOLUCIÓN DEFINITIVA!
-        // Le decimos al DataSource que la sección '.list' necesita ser recargada.
-        // Esto es el equivalente a 'tableView.reloadSections', pero seguro para DiffableDataSource.
-        // Forzará que se llame de nuevo a 'tableView(_:viewForHeaderInSection:)', que ahora
-        // creará y configurará la cabecera con el 'selectedTabIndex' ya puesto en 0.
-        snapshot.reloadSections([.list])
-        
-        // 6. Aplica todos los cambios (celdas, ítems y recarga de sección) a la vez.
-        // Esto soluciona el problema de temporización y el bug visual.
-        dataSource.apply(snapshot, animatingDifferences: false)
+        updateContent()
     }
 }
-
 extension ViewController: UITableViewDelegate {
     func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
-        guard let sectionKind = Section(rawValue: section), sectionKind == .list else {
-            return nil
-        }
-        guard let header = tableView.dequeueReusableHeaderFooterView(withIdentifier: TabBarTableViewHeader.reuseIdentifier) as? TabBarTableViewHeader else {
-            return nil
-        }
+        guard let sectionKind = Section(rawValue: section), sectionKind == .list else { return nil }
+        guard let header = tableView.dequeueReusableHeaderFooterView(withIdentifier: MainTabBarHeaderView.reuseIdentifier) as? MainTabBarHeaderView else { return nil }
         header.delegate = self
         header.configure(with: tabData, selectedIndex: selectedTabIndex)
         return header
     }
-
     func tableView(_ tableView: UITableView, heightForHeaderInSection section: Int) -> CGFloat {
-        guard let sectionKind = Section(rawValue: section) else {
-            return 0
-        }
+        guard let sectionKind = Section(rawValue: section) else { return 0 }
         return sectionKind == .list ? UITableView.automaticDimension : 0.0
     }
 }
-
 extension ViewController: TabBarViewDelegate {
     func tabBarView(didSelectTabAt index: Int) {
         guard index != selectedTabIndex else { return }
         selectedTabIndex = index
         updateContent()
     }
-    
     func tabBarViewRequiresLayoutUpdate() {
-        // En iOS 15+ se recomienda `performBatchUpdates`.
         tableView.performBatchUpdates(nil)
     }
 }
-
 extension Collection {
     subscript(safe index: Index) -> Element? {
         return indices.contains(index) ? self[index] : nil
