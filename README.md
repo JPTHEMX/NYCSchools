@@ -22,8 +22,11 @@ final class ViewController: UIViewController {
     private var collectionView: UICollectionView!
     private let cellSpacing: CGFloat = 16.0
 
+    // Propiedades para cachear la altura
     private var cachedGridCellHeight: CGFloat?
     private var shouldRecalculateGridHeight = true
+    
+    // La celda de medición persistente ha sido eliminada. Se creará on-demand.
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -45,6 +48,7 @@ final class ViewController: UIViewController {
 
     @objc private func contentSizeCategoryDidChange() {
         shouldRecalculateGridHeight = true
+        // Reemplazar el layout por uno nuevo es la forma más robusta de asegurar una actualización completa.
         collectionView.setCollectionViewLayout(createLayout(), animated: true)
     }
     
@@ -125,16 +129,44 @@ extension ViewController: UICollectionViewDataSource {
         return section
     }
 
+    // EN: ViewController.swift
+
+    // EN: ViewController.swift
+
     private func createCarouselSection() -> NSCollectionLayoutSection {
-        let itemSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .estimated(180))
+        let itemSize = NSCollectionLayoutSize(
+            widthDimension: .fractionalWidth(1.0),
+            heightDimension: .estimated(180)
+        )
         let item = NSCollectionLayoutItem(layoutSize: itemSize)
-        let group = NSCollectionLayoutGroup.horizontal(layoutSize: itemSize, subitems: [item])
-        let section = NSCollectionLayoutSection(group: group)
-        section.contentInsets = NSDirectionalEdgeInsets(top: cellSpacing, leading: 16, bottom: cellSpacing, trailing: 16)
         
-        let headerSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .estimated(44))
-        let sectionHeader = NSCollectionLayoutBoundarySupplementaryItem(layoutSize: headerSize, elementKind: UICollectionView.elementKindSectionHeader, alignment: .top)
+        // --- CAMBIO CLAVE 1: Aplicamos los márgenes horizontales al grupo ---
+        // En lugar de aplicar los insets a la sección, los aplicamos aquí.
+        // Así, solo el contenido del grupo (la celda) tendrá estos márgenes.
+        let group = NSCollectionLayoutGroup.horizontal(layoutSize: itemSize, subitems: [item])
+        group.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16)
+        
+        let section = NSCollectionLayoutSection(group: group)
+        
+        // --- CAMBIO CLAVE 2: Ajustamos los márgenes de la sección ---
+        // La sección ahora solo necesita espaciado vertical. Sus bordes izquierdo y
+        // derecho coincidirán con los del UICollectionView.
+        section.contentInsets = NSDirectionalEdgeInsets(top: cellSpacing, leading: 0, bottom: cellSpacing, trailing: 0)
+
+        // --- El Header no cambia, pero ahora se comportará como queremos ---
+        // Como la sección ya no tiene márgenes horizontales, el header
+        // (que es un hijo de la sección) se extenderá de borde a borde.
+        let headerSize = NSCollectionLayoutSize(
+            widthDimension: .fractionalWidth(1.0),
+            heightDimension: .estimated(44)
+        )
+        let sectionHeader = NSCollectionLayoutBoundarySupplementaryItem(
+            layoutSize: headerSize,
+            elementKind: UICollectionView.elementKindSectionHeader,
+            alignment: .top
+        )
         section.boundarySupplementaryItems = [sectionHeader]
+        
         return section
     }
     
@@ -158,8 +190,10 @@ extension ViewController: UICollectionViewDataSource {
         if shouldRecalculateGridHeight || cachedGridCellHeight == nil {
             var maxHeight: CGFloat = 0
             
+            // Creamos una nueva celda de medición cada vez que se recalcula.
+            // Esto asegura que no hay estado residual y que las fuentes están actualizadas.
             let sizingGridCell = TitleSubtitleCell()
-            sizingGridCell.setSpacerActive(false)
+            sizingGridCell.setSpacerActive(false) // Desactivar spacer para la medición.
             
             if let gridSectionIndex = sections.firstIndex(of: .grid) {
                 for itemIndex in 0..<sections[gridSectionIndex].itemCount {
@@ -177,6 +211,9 @@ extension ViewController: UICollectionViewDataSource {
                     }
                 }
             }
+            
+            // La instancia 'sizingGridCell' será descartada al final de este bloque 'if'.
+            // No es necesario restaurar su estado.
             
             cachedGridCellHeight = (maxHeight > 0) ? maxHeight : 184.0
             shouldRecalculateGridHeight = false
@@ -217,20 +254,17 @@ extension ViewController: UICollectionViewDataSource {
         case .generalInfo, .footer:
             let cell = collectionView.dequeueReusableCell(withReuseIdentifier: TitleCell.reuseIdentifier, for: indexPath) as! TitleCell
             cell.configure(title: "Simple Cell for \(sectionType) section (\(indexPath.item))")
-            cell.backgroundColor = .systemGray5
-            cell.layer.cornerRadius = 12
+            cell.backgroundColor = .systemGray5; cell.layer.cornerRadius = 12
             return cell
         case .carousel:
             let cell = collectionView.dequeueReusableCell(withReuseIdentifier: CarouselCell.reuseIdentifier, for: indexPath) as! CarouselCell
             cell.configure(title: "Carousel Cell")
-            cell.backgroundColor = .systemBlue
-            cell.layer.cornerRadius = 12
+            cell.backgroundColor = .systemBlue; cell.layer.cornerRadius = 12
             return cell
         case .grid:
             let cell = collectionView.dequeueReusableCell(withReuseIdentifier: TitleSubtitleCell.reuseIdentifier, for: indexPath) as! TitleSubtitleCell
             configureCellContent(cell, at: indexPath)
-            cell.backgroundColor = .systemGray6
-            cell.layer.cornerRadius = 12
+            cell.backgroundColor = .systemGray6; cell.layer.cornerRadius = 12
             return cell
         }
     }
@@ -243,24 +277,36 @@ extension ViewController: UICollectionViewDataSource {
     }
 }
 
+
+
+
+
+
+
+
+
+
+
 import UIKit
 
 final class TitleSubtitleCell: UICollectionViewCell {
     static let reuseIdentifier = "TitleSubtitleCell"
+
+    // MARK: - Vistas (Views)
     
     private let logoImageView: UIImageView = {
         let imageView = UIImageView()
         imageView.contentMode = .scaleAspectFill
         imageView.clipsToBounds = true
-        imageView.backgroundColor = .systemGray4
+        imageView.backgroundColor = .systemGray4 // Placeholder
         imageView.layer.cornerRadius = 8
-        imageView.image = UIImage(systemName: "photo.fill")
+        imageView.image = UIImage(systemName: "photo.fill") // Imagen por defecto
         return imageView
     }()
 
     let tagLabel: UILabel = {
         let label = UILabel()
-        label.font = .preferredFont(forTextStyle: .callout)
+        label.font = .preferredFont(forTextStyle: .body)
         label.textColor = .white
         label.backgroundColor = .systemRed
         label.textAlignment = .center
@@ -299,7 +345,12 @@ final class TitleSubtitleCell: UICollectionViewCell {
         return label
     }()
 
+    // <-- CAMBIO CLAVE 1: Añadir una vista espaciadora
+    // Esta vista no tiene contenido y su única función es estirarse para absorber
+    // cualquier espacio vertical sobrante que el CollectionView imponga a la celda.
     private let spacerView = UIView()
+
+    // MARK: - Init
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -310,67 +361,91 @@ final class TitleSubtitleCell: UICollectionViewCell {
         fatalError("init(coder:) has not been implemented")
     }
     
+    // MARK: - API de Configuración
+
     func configure(logo: UIImage?, tag: String?, title: String, subtitle: String, description: String) {
         logoImageView.image = logo ?? UIImage(systemName: "photo.fill")
         titleLabel.text = title
         subtitleLabel.text = subtitle
         descriptionLabel.text = description
         
+        // Lógica para mostrar u ocultar el tagLabel
         if let tagText = tag, !tagText.isEmpty {
-            tagLabel.text = " \(tagText) "
+            tagLabel.text = " \(tagText) " // Añadimos padding interno
             tagLabel.isHidden = false
         } else {
             tagLabel.text = nil
             tagLabel.isHidden = true
         }
         
+        // Ocultar etiquetas si no tienen contenido para un layout más robusto
         subtitleLabel.isHidden = subtitle.isEmpty
         descriptionLabel.isHidden = description.isEmpty
     }
-    
+
+    // MARK: - Configuración del Layout (UI Setup)
+
     func setSpacerActive(_ isActive: Bool) {
         spacerView.isHidden = !isActive
     }
+
     
     private func setupUI() {
+        
+        // Desactivamos `translatesAutoresizingMaskIntoConstraints` para todas las vistas
         [logoImageView, tagLabel, titleLabel, subtitleLabel, descriptionLabel, spacerView].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
         }
         
+        // Colores de fondo para depuración. Puedes comentarlos o eliminarlos.
         titleLabel.backgroundColor = .systemBlue
         subtitleLabel.backgroundColor = .systemGreen
         descriptionLabel.backgroundColor = .systemOrange
-        spacerView.backgroundColor = .clear
+        spacerView.backgroundColor = .clear // El espaciador debe ser invisible
 
+        // 1. Crear el Stack View para el contenido de texto principal
+        // <-- CAMBIO CLAVE 2: Añadir `spacerView` al final del Stack View
         let textContentStack = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel, descriptionLabel, spacerView])
         textContentStack.axis = .vertical
         textContentStack.alignment = .fill
-        textContentStack.distribution = .fill
+        textContentStack.distribution = .fill // Ahora `fill` es correcto
         textContentStack.spacing = 4
+        textContentStack.translatesAutoresizingMaskIntoConstraints = false
         
+        // Esta configuración es CORRECTA y muy importante. Evita que las etiquetas
+        // se estiren entre sí. Ahora, el `spacerView` será el único que se estire
+        // porque tiene una prioridad de "abrazo" (hugging) mucho más baja por defecto (250).
         [titleLabel, subtitleLabel, descriptionLabel].forEach { label in
             label.setContentHuggingPriority(.required, for: .vertical)
             label.setContentCompressionResistancePriority(.required, for: .vertical)
         }
 
+        // 2. Añadir todas las vistas a la jerarquía
         contentView.addSubview(logoImageView)
         contentView.addSubview(tagLabel)
         contentView.addSubview(textContentStack)
         
+        // 3. Activar las Restricciones (Constraints)
+        // Estas restricciones no cambian, siguen siendo correctas.
         NSLayoutConstraint.activate([
-            logoImageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16.0),
-            logoImageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16.0),
+            // --- Logo ---
+            logoImageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 48.0),
+            logoImageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8.0),
             logoImageView.widthAnchor.constraint(equalToConstant: 56.0),
             logoImageView.heightAnchor.constraint(equalToConstant: 56.0),
             
-            tagLabel.topAnchor.constraint(equalTo: logoImageView.bottomAnchor, constant: 4.0),
-            tagLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16.0),
-            tagLabel.leadingAnchor.constraint(greaterThanOrEqualTo: logoImageView.trailingAnchor, constant: 8.0),
+            // --- Tag ---
+            tagLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 84.0),
+            tagLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8.0),
+            tagLabel.leadingAnchor.constraint(greaterThanOrEqualTo: logoImageView.trailingAnchor),
 
-            textContentStack.topAnchor.constraint(equalTo: tagLabel.bottomAnchor, constant: 12.0),
-            textContentStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16.0),
-            textContentStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16.0),
-            textContentStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16.0)
+            // --- Bloque de Texto (Stack View) ---
+            textContentStack.topAnchor.constraint(equalTo: tagLabel.bottomAnchor, constant: 6.0),
+            textContentStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8.0),
+            textContentStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8.0),
+            
+            // La restricción final que completa la cadena vertical y hace que la celda sea auto-dimensionable
+            textContentStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8.0)
         ])
         
         setSpacerActive(true)
@@ -462,20 +537,21 @@ class TitleCell: UICollectionViewCell {
 
 
 
+// EN: TitleHeaderView.swift
 
 import UIKit
 
 class TitleHeaderView: UICollectionReusableView {
     static let reuseIdentifier = "TitleHeaderView"
 
+    private var titleLabelLeadingConstraint: NSLayoutConstraint!
+    private var titleLabelTrailingConstraint: NSLayoutConstraint!
+    
     private let titleLabel: UILabel = {
         let label = UILabel()
         label.font = .preferredFont(forTextStyle: .body)
         label.textColor = .label
-        
-        // --- LA CORRECCIÓN ESTÁ AQUÍ ---
-        label.numberOfLines = 0 // Cambiado de 1 a 0 para permitir múltiples líneas
-        
+        label.numberOfLines = 0
         label.adjustsFontForContentSizeCategory = true
         label.translatesAutoresizingMaskIntoConstraints = false
         return label
@@ -483,20 +559,56 @@ class TitleHeaderView: UICollectionReusableView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = .systemBackground
-        addSubview(titleLabel)
-
-        // Las constraints existentes ya son correctas para el auto-dimensionamiento
-        NSLayoutConstraint.activate([
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 0),
-            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: 0),
-            titleLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8)
-        ])
+        setupUI()
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+    
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        
+        if traitCollection.horizontalSizeClass != previousTraitCollection?.horizontalSizeClass ||
+           traitCollection.verticalSizeClass != previousTraitCollection?.verticalSizeClass {
+            updatePaddingForCurrentTraits()
+        }
+    }
+    
+    private func updatePaddingForCurrentTraits() {
+        let horizontalPadding = padding(for: traitCollection)
+        titleLabelLeadingConstraint.constant = horizontalPadding
+        titleLabelTrailingConstraint.constant = -horizontalPadding // Recuerda el signo negativo para el trailing
+    }
+
+    private func setupUI() {
+        backgroundColor = .systemBackground
+        addSubview(titleLabel)
+
+        titleLabelLeadingConstraint = titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor)
+        titleLabelTrailingConstraint = titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor)
+        
+        NSLayoutConstraint.activate([
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            titleLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            titleLabelLeadingConstraint,
+            titleLabelTrailingConstraint
+        ])
+        
+        updatePaddingForCurrentTraits()
+    }
+    
+    /// Devuelve el padding horizontal basado en el trait collection actual.
+    private func padding(for traits: UITraitCollection) -> CGFloat {
+        // Caso para iPhone
+        if traits.userInterfaceIdiom == .phone {
+            // Si es iPhone y está en orientación landscape (.compact verticalSizeClass), el padding es 0.
+            return traits.verticalSizeClass == .compact ? 0.0 : 16.0
+        }
+        
+        // Caso para iPad y otros (Mac, etc.)
+        // Para iPad, siempre será 16.0, tanto en portrait como en landscape.
+        return 16.0
     }
 
     func configure(title: String) {
@@ -505,11 +617,3 @@ class TitleHeaderView: UICollectionReusableView {
         isAccessibilityElement = true
     }
 }
-
-
-
-
-
-
-
-
