@@ -1068,7 +1068,9 @@ final class FooterCell: UICollectionViewCell {
             stackView.leadingAnchor.constraint(equalTo: iconImageView.trailingAnchor, constant: 12),
             stackView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             stackView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
-            stackView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12)
+            stackView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
+            
+            contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 32)
         ])
     }
 }
@@ -2316,7 +2318,6 @@ extension ViewController {
     
     private func createFooterSection(layoutEnvironment: NSCollectionLayoutEnvironment) -> NSCollectionLayoutSection {
         let cellWidth: CGFloat = 160.0
-        
         let itemSize = NSCollectionLayoutSize(
             widthDimension: .absolute(cellWidth),
             heightDimension: .estimated(100)
@@ -2327,14 +2328,14 @@ extension ViewController {
             widthDimension: .absolute(cellWidth),
             heightDimension: .estimated(100)
         )
+       
         let group = NSCollectionLayoutGroup.vertical(layoutSize: groupSize, subitems: [item])
-        
         let section = NSCollectionLayoutSection(group: group)
         
         let containerWidth = layoutEnvironment.container.effectiveContentSize.width
         let horizontalInset = (containerWidth - cellWidth) / 2.0
         let positiveHorizontalInset = max(0, horizontalInset)
-
+        
         section.contentInsets = NSDirectionalEdgeInsets(
             top: cellSpacing,
             leading: positiveHorizontalInset,
@@ -2507,4 +2508,3 @@ extension Collection {
         return indices.contains(index) ? self[index] : nil
     }
 }
-
