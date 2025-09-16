@@ -1,21 +1,3 @@
-I've noticed the UITableView has been moved inside a UIStackView. I have some significant concerns about this approach, as it can lead to critical performance issues and unexpected layout behavior. I'd like to explain why this pattern is generally discouraged.
-Reasoning:
-The core issue is a fundamental conflict between how UIStackView and UIScrollView (which UITableView inherits from) calculate their size and manage their content.
-1. Broken Scrolling and Layout Ambiguity: UIStackView calculates its own size by querying the intrinsicContentSize of its arranged subviews. A UITableView's intrinsic content size is its contentSize—the total height of all its cells combined. This means the UIStackView will attempt to grow to be large enough to display the entire table view without scrolling. This breaks the table view's scrolling mechanism, as its frame will be as large as its content.
-2. Critical Performance Issues (Loss of Cell Reuse): Because the UIStackView forces the table view to render its full height, the UITableView will load every single cell into memory at once. This completely defeats the purpose of cell reuse (dequeueReusableCell), which is the primary mechanism that makes table views efficient. For tables with a large number of rows, this will cause extreme memory consumption, slow loading times, and can easily freeze or crash the application.
-3. Unnecessary Complexity: A UIStackView is a powerful tool for arranging multiple, non-scrollable views. Using it to contain a single UITableView doesn't provide any layout benefits and adds an unnecessary layer to the view hierarchy. Standard Auto Layout constraints are the correct tool for positioning a table view within its superview.
-Suggestion:
-I strongly recommend that we revert this change and place the UITableView as a direct subview of the view controller's main view.
-If the goal was to position other views alongside the table view (e.g., a label above it), this should be achieved using standard Auto Layout constraints, not a UIStackView. For example:
-• Constrain the label to the top of the superview.
-• Constrain the table view's top anchor to the label's bottom anchor.
-• Constrain the table view's leading, trailing, and bottom anchors to the superview.
-This standard approach will preserve the table view's performance and ensure its scrolling behavior works as expected.
-Happy to discuss this further if you have any questions!
-
-
-
-
 import UIKit
 
 struct TabItem: Hashable {
