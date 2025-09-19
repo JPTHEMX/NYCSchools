@@ -1,5 +1,13 @@
 import UIKit
 
+// MARK: - MODELS
+
+enum ExperienceType {
+    case grid
+    case list
+    case carousel
+}
+
 struct TabItem: Hashable {
     let title: String
 }
@@ -67,6 +75,7 @@ struct ShoppingModel: Hashable {
     }
 }
 
+// --- MODIFICADO ---
 struct ContentModel: Hashable {
     let id = UUID()
     let logo: UIImage?
@@ -74,13 +83,15 @@ struct ContentModel: Hashable {
     let title: String
     let subtitle: String
     let description: String
-    
-    init(logo: UIImage? = nil, tag: String? = nil, title: String, subtitle: String, description: String) {
+    let isShoppingPlaceholder: Bool // Flag para identificar el placeholder de shopping
+
+    init(logo: UIImage? = nil, tag: String? = nil, title: String, subtitle: String, description: String, isShoppingPlaceholder: Bool = false) {
         self.logo = logo
         self.tag = tag
         self.title = title
         self.subtitle = subtitle
         self.description = description
+        self.isShoppingPlaceholder = isShoppingPlaceholder
     }
     
     func hash(into hasher: inout Hasher) {
@@ -90,9 +101,20 @@ struct ContentModel: Hashable {
     static func == (lhs: ContentModel, rhs: ContentModel) -> Bool {
         return lhs.id == rhs.id
     }
+    
+    // Método estático para crear el placeholder de shopping vacío
+    static func emptyShoppingPlaceholder() -> ContentModel {
+        return ContentModel(
+            logo: nil,
+            tag: nil,
+            title: "",
+            subtitle: "",
+            description: "",
+            isShoppingPlaceholder: true
+        )
+    }
 }
 
-// Extensión actualizada para ContentModel
 extension ContentModel {
     static func carouselItem(index: Int, prefix: String, isHighlighted: Bool = false) -> ContentModel {
         let tag: String? = isHighlighted ? "Destacado" : nil
@@ -134,7 +156,6 @@ extension ContentModel {
     }
 }
 
-/// This enum now holds only the content type and its associated data.
 enum SectionContent: Hashable {
     case generalInfo(header: SectionHeader?, items: [InfoModel])
     case carousel(header: SectionHeader?, items: [ContentModel])
@@ -143,12 +164,10 @@ enum SectionContent: Hashable {
     case footer(header: SectionHeader?, items: [FooterModel])
 }
 
-/// Section is now a struct, allowing its properties (like the header) to be mutable.
 struct Section: Hashable {
     let id = UUID()
     var content: SectionContent
     
-    // Computed property para acceder al header
     var header: SectionHeader? {
         switch content {
         case .generalInfo(let header, _),
@@ -171,15 +190,19 @@ struct Section: Hashable {
 
 import UIKit
 
+// MARK: - DATA MANAGER
+
 @MainActor
 class SectionDataManager {
     
     // MARK: - Properties
     
     private var sectionsByTab: [TabItem: [Section]] = [:]
+    private var shoppingPlaceholderId: UUID? // Para rastrear el placeholder
     var isValueEnabled: Bool
     var isVideoEnabled: Bool
     var isShoppingEnabled: Bool
+    var experience: ExperienceType
     
     var tabData: [TabItem] = (0..<8).map { TabItem(title: "Categoría \($0 + 1)") }
     private(set) var selectedTabIndex: Int = 0
@@ -190,16 +213,94 @@ class SectionDataManager {
         return tabData[safe: selectedTabIndex]
     }
     
-    /// Almacena el índice dinámico calculado para la pestaña actual. Es la única fuente de verdad para la posición de la ShoppingCell.
-    private(set) var currentShoppingCellIndex: Int?
+    private(set) var currentShoppingCellIndex: Int? {
+        didSet {
+            // Si el índice cambia, mueve el placeholder. No se notifica desde aquí
+            // para evitar el bucle durante el recálculo del layout.
+            if currentShoppingCellIndex != oldValue {
+                updateShoppingPlaceholderPosition(shouldNotify: false)
+            }
+        }
+    }
 
     // MARK: - Initializer
 
-    init(isValueEnabled: Bool = false, isVideoEnabled: Bool = false, isShoppingEnabled: Bool = false) {
+    init(isValueEnabled: Bool = false, isVideoEnabled: Bool = false, isShoppingEnabled: Bool = false, experience: ExperienceType = .grid) {
         self.isValueEnabled = isValueEnabled
         self.isVideoEnabled = isVideoEnabled
         self.isShoppingEnabled = isShoppingEnabled
+        self.experience = experience
         setupInitialData()
+        
+        // Inicializa el placeholder si es necesario después de cargar los datos
+        if isShoppingEnabled {
+            updateShoppingState(columnCount: 2, shouldNotify: false)
+        }
+    }
+    
+    // MARK: - Shopping Placeholder Management
+    
+    func setSelectedTabIndex(_ index: Int, columnCount: Int) {
+        guard index != selectedTabIndex, tabData.indices.contains(index) else { return }
+        selectedTabIndex = index
+        updateShoppingState(columnCount: columnCount, shouldNotify: true)
+    }
+
+    func setIsShoppingEnabled(_ isEnabled: Bool, columnCount: Int) {
+        guard isEnabled != isShoppingEnabled else { return }
+        isShoppingEnabled = isEnabled
+        updateShoppingState(columnCount: columnCount, shouldNotify: true)
+    }
+
+    func updateStateForLayoutChange(columnCount: Int) {
+        let oldIndex = self.currentShoppingCellIndex
+        updateShoppingCellIndex(columnCount: columnCount)
+        
+        if oldIndex != self.currentShoppingCellIndex {
+            updateShoppingPlaceholderPosition(shouldNotify: false)
+        }
+    }
+    
+    // MARK: - Private State Management
+    
+    private func updateShoppingState(columnCount: Int, shouldNotify: Bool) {
+        updateShoppingCellIndex(columnCount: columnCount)
+        updateShoppingPlaceholderPosition(shouldNotify: shouldNotify)
+    }
+    
+    private func updateShoppingPlaceholderPosition(shouldNotify: Bool) {
+        guard let tab = currentTab, var sections = sectionsByTab[tab] else { return }
+        
+        guard let gridSectionIndex = sections.firstIndex(where: {
+            if case .grid = $0.content {
+                return true
+            }
+            return false
+        }) else { return }
+        
+        var gridSection = sections[gridSectionIndex]
+        guard case .grid(let header, var items) = gridSection.content else {
+            return
+        }
+        
+        if let placeholderId = shoppingPlaceholderId {
+            items.removeAll { $0.id == placeholderId }
+            shoppingPlaceholderId = nil
+        }
+        
+        if isShoppingEnabled, let shoppingIndex = currentShoppingCellIndex, shoppingIndex <= items.count {
+            let placeholder = ContentModel.emptyShoppingPlaceholder()
+            shoppingPlaceholderId = placeholder.id
+            items.insert(placeholder, at: shoppingIndex)
+        }
+        
+        gridSection.content = .grid(header: header, items: items)
+        sections[gridSectionIndex] = gridSection
+        sectionsByTab[tab] = sections
+        
+        if shouldNotify {
+            onSectionsDidUpdate?()
+        }
     }
     
     // MARK: - Subscripts for Mutable Data Access
@@ -260,6 +361,10 @@ class SectionDataManager {
                 }
             case .grid(let header, var items):
                 if let newItem = newValue as? ContentModel, items.indices.contains(indexPath.item) {
+                    // Evita que el placeholder sea reemplazado por esta vía
+                    if items[indexPath.item].isShoppingPlaceholder {
+                        return
+                    }
                     items[indexPath.item] = newItem
                     newContent = .grid(header: header, items: items)
                     modelToSync = newItem
@@ -363,7 +468,6 @@ class SectionDataManager {
                 }
             }
             
-            // Usar el subscript de sección existente para actualizar la fuente de datos
             self[section: sectionIndex] = section
         }
     }
@@ -398,33 +502,39 @@ class SectionDataManager {
 
     // MARK: - Logic for Special Cells
 
-    /// Calcula y actualiza el índice de la ShoppingCell basándose en el entorno del layout.
-    /// El ViewController llamará a este método cuando el layout se invalide.
-    func updateShoppingCellIndex(for tab: TabItem, columnCount: Int) {
+    func updateShoppingCellIndex(columnCount: Int) {
         self.currentShoppingCellIndex = nil
         
-        guard let sections = sectionsByTab[tab],
-              let gridSection = sections.first(where: { if case .grid = $0.content { return true } else { return false } }),
+        guard let currentTab,
+              let sections = sectionsByTab[currentTab],
+              let gridSection = sections.first(where: {
+                  if case .grid = $0.content {
+                      return true
+                  }
+                  return false
+              }),
               case .grid(_, let items) = gridSection.content else {
             return
         }
         
-        let itemCount = items.count
+        let realItemCount = items.filter { !$0.isShoppingPlaceholder }.count
         let baseShoppingIndex = 19
 
-        guard isShoppingEnabled && itemCount > baseShoppingIndex else {
+        guard isShoppingEnabled && realItemCount > baseShoppingIndex else {
+            self.currentShoppingCellIndex = nil // Asegúrate de limpiarlo si las condiciones no se cumplen
             return
         }
 
-        // 1. Determinar desde dónde empieza el grid
         var gridStartIndex = 0
         if isValueEnabled {
-            // En iPad/Portrait (<=2 columnas), ValueCell ocupa 1 espacio.
-            // En Landscape (>2 columnas), ValueCell y su par ocupan 2 espacios.
-            gridStartIndex = (columnCount <= 2) ? 1 : 2
+            switch experience {
+            case .list:
+                gridStartIndex = 1
+            case .grid, .carousel:
+                gridStartIndex = (columnCount <= 2) ? 1 : 2
+            }
         }
         
-        // 2. Calcular la posición ideal alineada con el inicio de una fila
         var finalIndex: Int
         if baseShoppingIndex >= gridStartIndex {
             let indexRelativeToGrid = baseShoppingIndex - gridStartIndex
@@ -439,16 +549,19 @@ class SectionDataManager {
             finalIndex = gridStartIndex
         }
         
-        // 3. Guardar el resultado si es válido
-        if finalIndex < itemCount {
+        if finalIndex < realItemCount {
             self.currentShoppingCellIndex = finalIndex
+        } else {
+            self.currentShoppingCellIndex = nil
         }
     }
 
     func shouldUseValueCell(at indexPath: IndexPath) -> Bool {
         guard let content = self[section: indexPath.section]?.content else { return false }
         switch content {
-        case .grid:
+        case .grid(_, let items):
+            // Asegurarse de que no sea el placeholder de shopping
+            guard let item = items[safe: indexPath.item], !item.isShoppingPlaceholder else { return false }
             return isValueEnabled && indexPath.item == 0
         default:
             return false
@@ -456,14 +569,24 @@ class SectionDataManager {
     }
     
     func shouldUseShoppingCell(at indexPath: IndexPath) -> Bool {
-        guard isShoppingEnabled, let shoppingIndex = currentShoppingCellIndex else {
+        guard let content = self[section: indexPath.section]?.content else { return false }
+        
+        switch content {
+        case .grid(_, let items):
+            if let item = items[safe: indexPath.item] {
+                return item.isShoppingPlaceholder
+            }
+            return false
+        default:
             return false
         }
-        return indexPath.item == shoppingIndex
     }
     
     // MARK: - Data Synchronization
+    
     func updateContentModel(_ updatedModel: ContentModel) {
+        if updatedModel.isShoppingPlaceholder { return }
+        
         var needsUpdate = false
         for (tab, sections) in sectionsByTab {
             var updatedSections = sections
@@ -471,26 +594,44 @@ class SectionDataManager {
             for (sectionIndex, section) in sections.enumerated() {
                 var updatedSection = section
                 switch section.content {
+                    
                 case .carousel(let header, var items):
-                    if let index = items.firstIndex(where: { $0.id == updatedModel.id }) {
-                        items[index] = updatedModel
+                    var itemsWereUpdated = false
+                    for (itemIndex, item) in items.enumerated() {
+                        if item.id == updatedModel.id && !item.isShoppingPlaceholder {
+                            items[itemIndex] = updatedModel
+                            itemsWereUpdated = true
+                        }
+                    }
+                    
+                    if itemsWereUpdated {
                         updatedSection.content = .carousel(header: header, items: items)
                         updatedSections[sectionIndex] = updatedSection
                         sectionWasUpdated = true
                     }
+                    
                 case .grid(let header, var items):
-                    if let index = items.firstIndex(where: { $0.id == updatedModel.id }) {
-                        items[index] = updatedModel
+                    var itemsWereUpdated = false
+                    for (itemIndex, item) in items.enumerated() {
+                        if item.id == updatedModel.id && !item.isShoppingPlaceholder {
+                            items[itemIndex] = updatedModel
+                            itemsWereUpdated = true
+                        }
+                    }
+                    
+                    if itemsWereUpdated {
                         updatedSection.content = .grid(header: header, items: items)
                         updatedSections[sectionIndex] = updatedSection
                         sectionWasUpdated = true
                     }
+                    
                 case .list(let header, let item):
-                    if item.id == updatedModel.id {
+                    if item.id == updatedModel.id && !item.isShoppingPlaceholder {
                         updatedSection.content = .list(header: header, item: updatedModel)
                         updatedSections[sectionIndex] = updatedSection
                         sectionWasUpdated = true
                     }
+                    
                 default:
                     break
                 }
@@ -507,7 +648,10 @@ class SectionDataManager {
     
     func updateContentModels(_ updatedModels: [ContentModel]) {
         var needsUpdate = false
-        let modelsDict = Dictionary(uniqueKeysWithValues: updatedModels.map { ($0.id, $0) })
+        let modelsDict = Dictionary(uniqueKeysWithValues: updatedModels.compactMap {
+            $0.isShoppingPlaceholder ? nil : ($0.id, $0)
+        })
+        
         for (tab, sections) in sectionsByTab {
             var updatedSections = sections
             var sectionWasUpdated = false
@@ -564,9 +708,9 @@ class SectionDataManager {
     }
     
     func resetData() {
+        shoppingPlaceholderId = nil
         setupInitialData()
         selectedTabIndex = 0
-        onSectionsDidUpdate?()
     }
     
     func reloadTab(at index: Int) {
@@ -574,16 +718,12 @@ class SectionDataManager {
               let tab = tabData[safe: index] else { return }
         
         sectionsByTab[tab] = createSections(for: tab)
-        
-        if index == selectedTabIndex {
-            onSectionsDidUpdate?()
-        }
     }
     
     func setSelectedTabIndex(_ index: Int) {
         guard index != selectedTabIndex, tabData.indices.contains(index) else { return }
+        // El didSet se encargará de la lógica de actualización y notificación.
         selectedTabIndex = index
-        onSectionsDidUpdate?()
     }
     
     // MARK: - State Management & Data Generation
@@ -637,7 +777,8 @@ class SectionDataManager {
     }
 }
 
-import UIKit
+
+// MARK: - HEADERS
 
 final class TitleHeaderView: UICollectionReusableView {
 
@@ -675,27 +816,14 @@ final class TabBarHeaderView: UICollectionReusableView, TabBarViewDelegate {
     weak var delegate: TabBarViewDelegate?
     private let tabBarView = TabBarView<TabItem, TabCell>()
     
-    private enum Constants {
-        static let portraitPadding: CGFloat = 16.0
-        static let landscapePadding: CGFloat = 32.0
-    }
-    
     override init(frame: CGRect) {
         super.init(frame: frame)
         tabBarView.delegate = self
         setupSubviews()
-        updateHorizontalPadding()
     }
     
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
-    }
-    
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        if traitCollection.verticalSizeClass != previousTraitCollection?.verticalSizeClass {
-            updateHorizontalPadding()
-        }
     }
     
     func setupSubviews() {
@@ -711,20 +839,14 @@ final class TabBarHeaderView: UICollectionReusableView, TabBarViewDelegate {
         ])
     }
     
-    private func updateHorizontalPadding() {
-        let isLandscape = traitCollection.verticalSizeClass == .compact
-        let padding = isLandscape ? Constants.landscapePadding : Constants.portraitPadding
-        
+    func configure(with tabs: [TabItem], selectedIndex: Int, horizontalPadding: CGFloat) {
+        tabBarView.configure(with: tabs, selectedIndex: selectedIndex)
         directionalLayoutMargins = NSDirectionalEdgeInsets(
             top: 0,
-            leading: padding,
+            leading: horizontalPadding,
             bottom: 0,
-            trailing: padding
+            trailing: horizontalPadding
         )
-    }
-    
-    func configure(with tabs: [TabItem], selectedIndex: Int) {
-        tabBarView.configure(with: tabs, selectedIndex: selectedIndex)
     }
     
     func tabBarView(didSelectTabAt index: Int) {
@@ -736,12 +858,9 @@ final class TabBarHeaderView: UICollectionReusableView, TabBarViewDelegate {
     }
 }
 
-import UIKit
 
-// This is a UICollectionReusableView that has the exact layout and logic of a cell.
 final class ListHeaderView: UICollectionReusableView {
     
-    // All UI elements are copied directly from TitleSubtitleCell
     private let logoImageView: UIImageView = {
         let imageView = UIImageView()
         imageView.contentMode = .scaleAspectFill
@@ -803,7 +922,7 @@ final class ListHeaderView: UICollectionReusableView {
     private enum Constants {
         static let logoTopPadding: CGFloat = 12
         static let logoSize: CGFloat = 56
-        static let horizontalPadding: CGFloat = 16 // Adjusted for header
+        static let horizontalPadding: CGFloat = 16
         static let tagTopPadding: CGFloat = 12
         static let stackTopPadding: CGFloat = 8
         static let stackSpacing: CGFloat = 4
@@ -820,7 +939,6 @@ final class ListHeaderView: UICollectionReusableView {
         fatalError("init(coder:) has not been implemented")
     }
     
-    // The configure method now takes a single model
     func configure(with model: ContentModel) {
         currentModel = model
         
@@ -888,8 +1006,7 @@ final class ListHeaderView: UICollectionReusableView {
     }
 }
 
-
-import UIKit
+// MARK: - CELLS
 
 @MainActor
 protocol CellRegistrationProtocol: AnyObject {
@@ -1569,14 +1686,10 @@ final class CarouselCell: UICollectionViewCell, CarouselHeightCalculator {
         fatalError("init(coder:) has not been implemented")
     }
     
-    // Implementar prepareForReuse correctamente
     override func prepareForReuse() {
         super.prepareForReuse()
-        // Limpiar los datos
         items.removeAll()
-        // Resetear el scroll position
         carouselCollectionView.setContentOffset(.zero, animated: false)
-        // Recargar para limpiar las celdas reutilizadas
         carouselCollectionView.reloadData()
     }
     
@@ -1691,7 +1804,7 @@ protocol CarouselHeightCalculator {
     func calculateHeight(forWidth width: CGFloat) -> CGFloat
 }
 
-import UIKit
+// MARK: - TAB BAR VIEWS
 
 protocol TabCellConfigurable: UICollectionViewCell {
     associatedtype Item: Hashable
@@ -1879,8 +1992,7 @@ class TabBarView<Item: Hashable&Sendable, Cell: TabCellConfigurable>: UIView, UI
     }
 }
 
-
-import UIKit
+// MARK: - CUSTOM LAYOUT
 
 @MainActor
 final class StickyCarouselHeaderLayout: UICollectionViewCompositionalLayout {
@@ -1970,8 +2082,7 @@ final class StickyCarouselHeaderLayout: UICollectionViewCompositionalLayout {
     }
 }
 
-
-import UIKit
+// MARK: - VIEW CONTROLLER
 
 @MainActor
 final class ViewController: UIViewController {
@@ -1982,11 +2093,24 @@ final class ViewController: UIViewController {
     private var collectionView: UICollectionView!
     private let cellSpacing: CGFloat = 16.0
     
-    // Cache para el cálculo de alturas de celdas
     private var cachedGridCellHeight: CGFloat?
     private var shouldRecalculateGridHeight = true
     private var cachedCarouselCellHeight: CGFloat?
     private var shouldRecalculateCarouselHeight = true
+    
+    private var horizontalPadding: CGFloat {
+        let traits = view.traitCollection
+        
+        if traits.userInterfaceIdiom == .pad {
+            return 16.0
+        }
+        
+        if traits.verticalSizeClass == .compact {
+            return 0.0
+        }
+        
+        return 16.0
+    }
     
     // MARK: - Lifecycle
     
@@ -2005,9 +2129,11 @@ final class ViewController: UIViewController {
     // MARK: - Setup
     
     private func setupDataManager() {
-        sectionDataManager = SectionDataManager()
-        sectionDataManager.isValueEnabled = true
-        sectionDataManager.isShoppingEnabled = true
+        sectionDataManager = SectionDataManager(
+            isValueEnabled: true,
+            isShoppingEnabled: true,
+            experience: .list
+        )
         sectionDataManager.onSectionsDidUpdate = { [weak self] in
             self?.handleDataUpdate()
         }
@@ -2039,7 +2165,7 @@ final class ViewController: UIViewController {
         collectionView.register(InfoCell.self, forCellWithReuseIdentifier: InfoCell.reuseIdentifier)
         collectionView.register(CarouselCell.self, forCellWithReuseIdentifier: CarouselCell.reuseIdentifier)
         collectionView.register(ValueCell.self, forCellWithReuseIdentifier: ValueCell.reuseIdentifier)
-        collectionView.register(ShoppingCell.self, forCellWithReuseIdentifier: ShoppingCell.reuseIdentifier) // Agregar esta línea
+        collectionView.register(ShoppingCell.self, forCellWithReuseIdentifier: ShoppingCell.reuseIdentifier)
         collectionView.register(TitleSubtitleCell.self, forCellWithReuseIdentifier: TitleSubtitleCell.reuseIdentifier)
         collectionView.register(FooterCell.self, forCellWithReuseIdentifier: FooterCell.reuseIdentifier)
         collectionView.register(UICollectionViewCell.self, forCellWithReuseIdentifier: "cell")
@@ -2048,8 +2174,8 @@ final class ViewController: UIViewController {
         collectionView.register(TabBarHeaderView.self, forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader, withReuseIdentifier: TabBarHeaderView.reuseIdentifier)
         collectionView.register(ListHeaderView.self, forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader, withReuseIdentifier: ListHeaderView.reuseIdentifier)
         collectionView.register(UICollectionReusableView.self,
-                                    forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader,
-                                    withReuseIdentifier: "blankHeader")
+                                forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader,
+                                withReuseIdentifier: "blankHeader")
     }
 
     private func setupConstraints() {
@@ -2079,7 +2205,7 @@ final class ViewController: UIViewController {
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         if traitCollection.horizontalSizeClass != previousTraitCollection?.horizontalSizeClass ||
-           traitCollection.verticalSizeClass != previousTraitCollection?.verticalSizeClass {
+            traitCollection.verticalSizeClass != previousTraitCollection?.verticalSizeClass {
             invalidateCacheAndReload()
         }
     }
@@ -2106,15 +2232,15 @@ extension ViewController {
             
             switch section.content {
             case .generalInfo:
-                return createInfoSection()
+                return self.createInfoSection()
             case .carousel:
-                return createCarouselSection(for: sectionIndex)
+                return self.createCarouselSection(for: sectionIndex)
             case .grid:
-                return createGridSection(for: sectionIndex, layoutEnvironment: layoutEnvironment)
+                return self.createGridSection(for: sectionIndex, layoutEnvironment: layoutEnvironment)
             case .list:
                 return nil
             case .footer:
-                return createFooterSection(layoutEnvironment: layoutEnvironment)
+                return self.createFooterSection(layoutEnvironment: layoutEnvironment)
             }
         }
         if let carouselSectionIndex = sectionDataManager.sections.firstIndex(where: {
@@ -2134,7 +2260,7 @@ extension ViewController {
         let group = NSCollectionLayoutGroup.vertical(layoutSize: itemSize, subitems: [item])
         let section = NSCollectionLayoutSection(group: group)
         section.interGroupSpacing = cellSpacing
-        section.contentInsets = NSDirectionalEdgeInsets(top: cellSpacing, leading: 16, bottom: cellSpacing, trailing: 16)
+        section.contentInsets = NSDirectionalEdgeInsets(top: cellSpacing, leading: self.horizontalPadding, bottom: cellSpacing, trailing: self.horizontalPadding)
         return section
     }
 
@@ -2196,13 +2322,12 @@ extension ViewController {
 
         let columnCount = (isIPad || !isPortrait) ? 3 : 2
         
-        if let currentTab = sectionDataManager.tabData[safe: sectionDataManager.selectedTabIndex] {
-            sectionDataManager.updateShoppingCellIndex(for: currentTab, columnCount: columnCount)
-        }
+        sectionDataManager.updateShoppingCellIndex(columnCount: columnCount)
+        
         let dynamicShoppingCellIndex = sectionDataManager.currentShoppingCellIndex
         
         let cellWidth: CGFloat
-        let availableWidth = layoutEnvironment.container.effectiveContentSize.width - 32
+        let availableWidth = layoutEnvironment.container.effectiveContentSize.width - (self.horizontalPadding * 2)
         if columnCount > 1 {
             cellWidth = (availableWidth - (CGFloat(columnCount - 1) * cellSpacing)) / CGFloat(columnCount)
         } else {
@@ -2222,30 +2347,61 @@ extension ViewController {
             let isValueItem = hasValueCell && currentIndex == 0
             let isShoppingItem = dynamicShoppingCellIndex != nil && currentIndex == dynamicShoppingCellIndex
 
-            if isValueItem || isShoppingItem {
+            if isValueItem {
                 let rowSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .absolute(finalHeight))
-                if columnCount <= 2 {
+                
+                if self.sectionDataManager.experience == .list {
                     let fullWidthItem = NSCollectionLayoutItem(layoutSize: rowSize)
                     let group = NSCollectionLayoutGroup.horizontal(layoutSize: rowSize, subitems: [fullWidthItem])
                     layoutGroups.append(group)
                     currentIndex += 1
                 } else {
-                    let wideItemSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(2/3), heightDimension: .fractionalHeight(1.0))
-                    let wideItem = NSCollectionLayoutItem(layoutSize: wideItemSize)
-                    let nextItemIsSpecial = (dynamicShoppingCellIndex != nil && currentIndex + 1 == dynamicShoppingCellIndex)
-                    if currentIndex + 1 < itemCount && !nextItemIsSpecial {
-                        let standardItemSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1/3), heightDimension: .fractionalHeight(1.0))
-                        let standardItem = NSCollectionLayoutItem(layoutSize: standardItemSize)
-                        let group = NSCollectionLayoutGroup.horizontal(layoutSize: rowSize, subitems: [wideItem, standardItem])
-                        group.interItemSpacing = .fixed(cellSpacing)
-                        layoutGroups.append(group)
-                        currentIndex += 2
-                    } else {
-                        let group = NSCollectionLayoutGroup.horizontal(layoutSize: rowSize, subitems: [wideItem])
+                    if columnCount <= 2 {
+                        let fullWidthItem = NSCollectionLayoutItem(layoutSize: rowSize)
+                        let group = NSCollectionLayoutGroup.horizontal(layoutSize: rowSize, subitems: [fullWidthItem])
                         layoutGroups.append(group)
                         currentIndex += 1
+                    } else {
+                        let wideItemSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(2/3), heightDimension: .fractionalHeight(1.0))
+                        let wideItem = NSCollectionLayoutItem(layoutSize: wideItemSize)
+                        let nextItemIsSpecial = (dynamicShoppingCellIndex != nil && currentIndex + 1 == dynamicShoppingCellIndex)
+                        if currentIndex + 1 < itemCount && !nextItemIsSpecial {
+                            let standardItemSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1/3), heightDimension: .fractionalHeight(1.0))
+                            let standardItem = NSCollectionLayoutItem(layoutSize: standardItemSize)
+                            let group = NSCollectionLayoutGroup.horizontal(layoutSize: rowSize, subitems: [wideItem, standardItem])
+                            group.interItemSpacing = .fixed(cellSpacing)
+                            layoutGroups.append(group)
+                            currentIndex += 2
+                        } else {
+                            let group = NSCollectionLayoutGroup.horizontal(layoutSize: rowSize, subitems: [wideItem])
+                            layoutGroups.append(group)
+                            currentIndex += 1
+                        }
                     }
                 }
+            } else if isShoppingItem {
+                 let rowSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .absolute(finalHeight))
+                 if columnCount <= 2 {
+                     let fullWidthItem = NSCollectionLayoutItem(layoutSize: rowSize)
+                     let group = NSCollectionLayoutGroup.horizontal(layoutSize: rowSize, subitems: [fullWidthItem])
+                     layoutGroups.append(group)
+                     currentIndex += 1
+                 } else {
+                     let wideItemSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(2/3), heightDimension: .fractionalHeight(1.0))
+                     let wideItem = NSCollectionLayoutItem(layoutSize: wideItemSize)
+                     if currentIndex + 1 < itemCount {
+                         let standardItemSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1/3), heightDimension: .fractionalHeight(1.0))
+                         let standardItem = NSCollectionLayoutItem(layoutSize: standardItemSize)
+                         let group = NSCollectionLayoutGroup.horizontal(layoutSize: rowSize, subitems: [wideItem, standardItem])
+                         group.interItemSpacing = .fixed(cellSpacing)
+                         layoutGroups.append(group)
+                         currentIndex += 2
+                     } else {
+                         let group = NSCollectionLayoutGroup.horizontal(layoutSize: rowSize, subitems: [wideItem])
+                         layoutGroups.append(group)
+                         currentIndex += 1
+                     }
+                 }
             } else {
                 let itemsLeft = itemCount - currentIndex
                 let stopIndex = dynamicShoppingCellIndex ?? itemCount
@@ -2261,7 +2417,7 @@ extension ViewController {
                 let groupSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .absolute(finalHeight))
                 let group = NSCollectionLayoutGroup.horizontal(layoutSize: groupSize, repeatingSubitem: item, count: itemsInThisRow)
                 if itemsInThisRow > 1 {
-                     group.interItemSpacing = .fixed(cellSpacing)
+                        group.interItemSpacing = .fixed(cellSpacing)
                 }
                 layoutGroups.append(group)
                 currentIndex += itemsInThisRow
@@ -2273,7 +2429,7 @@ extension ViewController {
         containerGroup.interItemSpacing = .fixed(cellSpacing)
         
         let section = NSCollectionLayoutSection(group: containerGroup)
-        section.contentInsets = NSDirectionalEdgeInsets(top: cellSpacing, leading: 16, bottom: cellSpacing, trailing: 16)
+        section.contentInsets = NSDirectionalEdgeInsets(top: cellSpacing, leading: self.horizontalPadding, bottom: cellSpacing, trailing: self.horizontalPadding)
         
         return section
     }
@@ -2284,8 +2440,7 @@ extension ViewController {
         let isIPad = traitCollection.userInterfaceIdiom == .pad
         
         let columnCount = isIPad ? 3 : (isPortrait ? 2 : 3)
-        let sectionInset: CGFloat = 16.0
-        let availableWidth = containerWidth - (sectionInset * 2)
+        let availableWidth = containerWidth - (self.horizontalPadding * 2)
         
         guard availableWidth > 0 else {
             let emptySize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .absolute(1))
@@ -2311,7 +2466,7 @@ extension ViewController {
         
         let section = NSCollectionLayoutSection(group: group)
         section.interGroupSpacing = cellSpacing
-        section.contentInsets = NSDirectionalEdgeInsets(top: cellSpacing, leading: sectionInset, bottom: cellSpacing, trailing: sectionInset)
+        section.contentInsets = NSDirectionalEdgeInsets(top: cellSpacing, leading: self.horizontalPadding, bottom: cellSpacing, trailing: self.horizontalPadding)
         return section
     }
     
@@ -2327,7 +2482,7 @@ extension ViewController {
             widthDimension: .absolute(cellWidth),
             heightDimension: .estimated(100)
         )
-       
+        
         let group = NSCollectionLayoutGroup.vertical(layoutSize: groupSize, subitems: [item])
         let section = NSCollectionLayoutSection(group: group)
         
@@ -2468,7 +2623,7 @@ extension ViewController: UICollectionViewDataSource {
         case .tabBar(let tabs, let selectedIndex):
             let header = collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: TabBarHeaderView.reuseIdentifier, for: indexPath) as! TabBarHeaderView
             header.delegate = self
-            header.configure(with: tabs, selectedIndex: selectedIndex)
+            header.configure(with: tabs, selectedIndex: selectedIndex, horizontalPadding: self.horizontalPadding)
             return header
             
         case .list(let item):
@@ -2485,7 +2640,7 @@ extension ViewController: UICollectionViewDelegate {
         collectionView.deselectItem(at: indexPath, animated: true)
         
         if let item = sectionDataManager[itemAt: indexPath] as? ContentModel {
-             print("Tapped on item: \(item.title)")
+            print("Tapped on item: \(item.title)")
         }
     }
 }
