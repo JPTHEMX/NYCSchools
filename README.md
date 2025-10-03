@@ -561,6 +561,20 @@ class SectionDataManager {
         }
     }
     
+    func silentlyUpdateListModel(_ newModel: ContentModel, at sectionIndex: Int) {
+        guard var section = self[section: sectionIndex],
+              let tab = currentTab,
+              case .list = section.content else { return }
+        
+        var newHeader = section.header
+        if case .list = newHeader {
+            newHeader = .list(newModel)
+        }
+        section.content = .list(header: newHeader, item: newModel)
+        
+        sectionsByTab[tab]?[sectionIndex] = section
+    }
+
     func updateContentModel(_ updatedModel: ContentModel) {
         if updatedModel.isShoppingPlaceholder { return }
         
@@ -2335,13 +2349,13 @@ final class ViewController: UIViewController {
         if let oldIndex = previouslyExpanded, !isCollapsing {
             if var oldModel = sectionDataManager[itemAt: IndexPath(item: 0, section: oldIndex)] as? ContentModel {
                 oldModel.isDetailsVisible = false
-                sectionDataManager[itemAt: IndexPath(item: 0, section: oldIndex)] = oldModel
+                sectionDataManager.silentlyUpdateListModel(oldModel, at: oldIndex)
             }
         }
         
         if var currentModel = sectionDataManager[itemAt: IndexPath(item: 0, section: sectionIndex)] as? ContentModel {
             currentModel.isDetailsVisible.toggle()
-            sectionDataManager[itemAt: IndexPath(item: 0, section: sectionIndex)] = currentModel
+            sectionDataManager.silentlyUpdateListModel(currentModel, at: sectionIndex)
         }
 
         expandedListSection = isCollapsing ? nil : sectionIndex
@@ -2836,12 +2850,14 @@ extension ViewController: UICollectionViewDataSource {
                 var loadingModel = selectedModel
                 loadingModel.isLoading = true
                 loadingModel.isSelected = true
-                self.sectionDataManager.updateContentModel(loadingModel)
+                self.sectionDataManager.silentlyUpdateListModel(loadingModel, at: indexPath.section)
+                self.collectionView.reloadSections(IndexSet([indexPath.section]))
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                     var finishedModel = loadingModel
                     finishedModel.isLoading = false
-                    self.sectionDataManager.updateContentModel(finishedModel)
+                    self.sectionDataManager.silentlyUpdateListModel(finishedModel, at: indexPath.section)
+                    self.collectionView.reloadSections(IndexSet([indexPath.section]))
                 }
             }
             
