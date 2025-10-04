@@ -1,6 +1,6 @@
 import UIKit
 
-// MARK: - Models
+// MARK: - Models (Simplificados)
 // =================================================================================
 
 enum ExperienceType {
@@ -19,7 +19,12 @@ enum SectionHeader: Hashable, Sendable {
     case list(ContentModel)
 }
 
-struct InfoModel: Hashable, Sendable {
+// MARK: - Content Items Protocol
+protocol ContentItem: Hashable, Sendable {
+    var id: UUID { get }
+}
+
+struct InfoModel: ContentItem {
     let id = UUID()
     let title: String
     let subtitle: String?
@@ -28,17 +33,9 @@ struct InfoModel: Hashable, Sendable {
         self.title = title
         self.subtitle = subtitle
     }
-    
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-    }
-    
-    static func == (lhs: InfoModel, rhs: InfoModel) -> Bool {
-        return lhs.id == rhs.id
-    }
 }
 
-struct FooterModel: Hashable, Sendable {
+struct FooterModel: ContentItem {
     let id = UUID()
     let title: String
     let subtitle: String?
@@ -47,17 +44,9 @@ struct FooterModel: Hashable, Sendable {
         self.title = title
         self.subtitle = subtitle
     }
-    
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-    }
-    
-    static func == (lhs: FooterModel, rhs: FooterModel) -> Bool {
-        return lhs.id == rhs.id
-    }
 }
 
-struct ContentModel: Hashable, Sendable {
+struct ContentModel: ContentItem {
     let id = UUID()
     let logo: UIImage?
     let tag: String?
@@ -69,7 +58,15 @@ struct ContentModel: Hashable, Sendable {
     var isLoading: Bool
     var isDetailsVisible: Bool
 
-    init(logo: UIImage? = nil, tag: String? = nil, title: String, subtitle: String, description: String, isShoppingPlaceholder: Bool = false, isSelected: Bool = false, isLoading: Bool = false, isDetailsVisible: Bool = false) {
+    init(logo: UIImage? = nil,
+         tag: String? = nil,
+         title: String,
+         subtitle: String,
+         description: String,
+         isShoppingPlaceholder: Bool = false,
+         isSelected: Bool = false,
+         isLoading: Bool = false,
+         isDetailsVisible: Bool = false) {
         self.logo = logo
         self.tag = tag
         self.title = title
@@ -79,14 +76,6 @@ struct ContentModel: Hashable, Sendable {
         self.isSelected = isSelected
         self.isLoading = isLoading
         self.isDetailsVisible = isDetailsVisible
-    }
-    
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-    }
-    
-    static func == (lhs: ContentModel, rhs: ContentModel) -> Bool {
-        return lhs.id == rhs.id
     }
     
     static func emptyShoppingPlaceholder() -> ContentModel {
@@ -101,6 +90,490 @@ struct ContentModel: Hashable, Sendable {
     }
 }
 
+// MARK: - Simplified Section Model
+enum SectionType: Hashable, Sendable {
+    case info
+    case carousel
+    case grid
+    case list
+    case footer
+}
+
+struct Section: Hashable, Sendable {
+    let id = UUID()
+    let type: SectionType
+    var header: SectionHeader?
+    var items: [any ContentItem]
+    
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+    
+    static func == (lhs: Section, rhs: Section) -> Bool {
+        return lhs.id == rhs.id
+    }
+}
+
+// MARK: - Refactored Data Manager
+@MainActor
+class SectionDataManager {
+    
+    // MARK: - Properties
+    private var sectionsByTab: [TabItem: [Section]] = [:]
+    private var shoppingPlaceholderId: UUID?
+    
+    var isValueEnabled: Bool
+    var isVideoEnabled: Bool
+    var isShoppingEnabled: Bool
+    var experience: ExperienceType
+    
+    var tabData: [TabItem] = (0..<8).map { TabItem(title: "Categoría \($0 + 1)") }
+    private(set) var selectedTabIndex: Int = 0
+    private(set) var currentShoppingCellIndex: Int?
+    
+    var onSectionsDidUpdate: (() -> Void)?
+    
+    private var currentTab: TabItem? {
+        return tabData[safe: selectedTabIndex]
+    }
+    
+    var sections: [Section] {
+        sectionsByTab[currentTab ?? TabItem(title: "")] ?? []
+    }
+    
+    // MARK: - Initialization
+    init(isValueEnabled: Bool = false,
+         isVideoEnabled: Bool = false,
+         isShoppingEnabled: Bool = false,
+         experience: ExperienceType = .grid) {
+        self.isValueEnabled = isValueEnabled
+        self.isVideoEnabled = isVideoEnabled
+        self.isShoppingEnabled = isShoppingEnabled
+        self.experience = experience
+        setupInitialData()
+        
+        if isShoppingEnabled {
+            updateShoppingState(columnCount: 2, shouldNotify: false)
+        }
+    }
+    
+    // MARK: - Public Methods (Replace complex subscripts)
+    
+    func getSection(at index: Int) -> Section? {
+        guard let tab = currentTab,
+              let sections = sectionsByTab[tab],
+              sections.indices.contains(index) else {
+            return nil
+        }
+        return sections[index]
+    }
+    
+    func updateSection(_ section: Section, at index: Int) {
+        guard let tab = currentTab,
+              var sections = sectionsByTab[tab],
+              sections.indices.contains(index) else {
+            return
+        }
+        sections[index] = section
+        sectionsByTab[tab] = sections
+    }
+    
+    func getItem(at indexPath: IndexPath) -> (any ContentItem)? {
+        guard let section = getSection(at: indexPath.section) else { return nil }
+        
+        switch section.type {
+        case .carousel:
+            // For carousel, return all items as it's a horizontal collection
+            return section.items.first
+        default:
+            return section.items[safe: indexPath.item]
+        }
+    }
+    
+    func updateCarouselItems(_ items: [ContentModel], at sectionIndex: Int) {
+        guard var section = getSection(at: sectionIndex),
+              section.type == .carousel else { return }
+        
+        section.items = items
+        updateSection(section, at: sectionIndex)
+        
+        // Sync each model if needed
+        for model in items {
+            updateContentModel(model)
+        }
+    }
+    
+    func updateItem(_ item: any ContentItem, at indexPath: IndexPath) {
+        guard var section = getSection(at: indexPath.section) else { return }
+        
+        switch section.type {
+        case .carousel:
+            // Para carousel, actualiza el item específico dentro del array
+            if let contentModel = item as? ContentModel,
+               indexPath.item < section.items.count {
+                section.items[indexPath.item] = contentModel
+            }
+            
+        case .grid, .info, .list, .footer:
+            if indexPath.item < section.items.count {
+                section.items[indexPath.item] = item
+            }
+        }
+        
+        updateSection(section, at: indexPath.section)
+        
+        if let contentModel = item as? ContentModel {
+            updateContentModel(contentModel)
+        }
+    }
+    
+    func getHeader(for sectionIndex: Int) -> SectionHeader? {
+        guard let section = getSection(at: sectionIndex) else { return nil }
+        
+        // Update tab bar header with current selection if needed
+        if case .tabBar(let tabs, _) = section.header {
+            return .tabBar(tabs: tabs, selectedIndex: selectedTabIndex)
+        }
+        
+        return section.header
+    }
+    
+    func updateHeader(_ header: SectionHeader?, for sectionIndex: Int) {
+        guard var section = getSection(at: sectionIndex) else { return }
+        section.header = header
+        updateSection(section, at: sectionIndex)
+    }
+    
+    func numberOfSections() -> Int {
+        sections.count
+    }
+    
+    func numberOfItems(in sectionIndex: Int) -> Int {
+        guard let section = getSection(at: sectionIndex) else { return 0 }
+        
+        switch section.type {
+        case .carousel:
+            return section.items.isEmpty ? 0 : 1  // Carousel is one item
+        case .list:
+            // Check if list item is visible
+            if let contentModel = section.items.first as? ContentModel {
+                return contentModel.isDetailsVisible ? 1 : 0
+            }
+            return 0
+        default:
+            return section.items.count
+        }
+    }
+    
+    func setSelectedTabIndex(_ index: Int, columnCount: Int) {
+        guard index != selectedTabIndex, tabData.indices.contains(index) else { return }
+        selectedTabIndex = index
+        updateShoppingState(columnCount: columnCount, shouldNotify: true)
+    }
+    
+    func setIsShoppingEnabled(_ isEnabled: Bool, columnCount: Int) {
+        guard isEnabled != isShoppingEnabled else { return }
+        isShoppingEnabled = isEnabled
+        updateShoppingState(columnCount: columnCount, shouldNotify: true)
+    }
+    
+    func updateStateForLayoutChange(columnCount: Int) {
+        let oldIndex = currentShoppingCellIndex
+        updateShoppingCellIndex(columnCount: columnCount)
+        
+        if oldIndex != currentShoppingCellIndex {
+            updateShoppingPlaceholderPosition(shouldNotify: false)
+        }
+    }
+    
+    func shouldUseValueCell(at indexPath: IndexPath) -> Bool {
+        guard let section = getSection(at: indexPath.section),
+              section.type == .grid else { return false }
+        
+        if let item = section.items[safe: indexPath.item] as? ContentModel,
+           !item.isShoppingPlaceholder {
+            return isValueEnabled && indexPath.item == 0
+        }
+        return false
+    }
+    
+    func shouldUseShoppingCell(at indexPath: IndexPath) -> Bool {
+        guard let section = getSection(at: indexPath.section),
+              section.type == .grid else { return false }
+        
+        if let item = section.items[safe: indexPath.item] as? ContentModel {
+            return item.isShoppingPlaceholder
+        }
+        return false
+    }
+    
+    func updateContentModel(_ updatedModel: ContentModel) {
+        guard !updatedModel.isShoppingPlaceholder else { return }
+        
+        var needsUpdate = false
+        
+        for (tab, sections) in sectionsByTab {
+            var updatedSections = sections
+            var sectionWasUpdated = false
+            
+            for (sectionIndex, section) in sections.enumerated() {
+                var updatedSection = section
+                var itemsWereUpdated = false
+                
+                // Update items if they match the updated model
+                updatedSection.items = section.items.map { item in
+                    if let contentItem = item as? ContentModel,
+                       contentItem.id == updatedModel.id {
+                        itemsWereUpdated = true
+                        return updatedModel
+                    }
+                    return item
+                }
+                
+                // Update header if it contains the model
+                if case .list(let headerModel) = section.header,
+                   headerModel.id == updatedModel.id {
+                    updatedSection.header = .list(updatedModel)
+                    itemsWereUpdated = true
+                }
+                
+                if itemsWereUpdated {
+                    updatedSections[sectionIndex] = updatedSection
+                    sectionWasUpdated = true
+                }
+            }
+            
+            if sectionWasUpdated {
+                sectionsByTab[tab] = updatedSections
+                needsUpdate = true
+            }
+        }
+        
+        if needsUpdate {
+            onSectionsDidUpdate?()
+        }
+    }
+    
+    func resetData() {
+        shoppingPlaceholderId = nil
+        setupInitialData()
+        selectedTabIndex = 0
+    }
+    
+    func reloadTab(at index: Int) {
+        guard tabData.indices.contains(index),
+              let tab = tabData[safe: index] else { return }
+        
+        sectionsByTab[tab] = createSections(for: tab)
+    }
+    
+    // MARK: - Public method for updateShoppingCellIndex
+    public func updateShoppingCellIndex(columnCount: Int) {
+        currentShoppingCellIndex = nil
+        
+        guard let currentTab,
+              let sections = sectionsByTab[currentTab],
+              let gridSection = sections.first(where: { $0.type == .grid }) else {
+            return
+        }
+        
+        let realItemCount = gridSection.items.compactMap { $0 as? ContentModel }
+            .filter { !$0.isShoppingPlaceholder }.count
+        let baseShoppingIndex = 19
+        
+        guard isShoppingEnabled && realItemCount > baseShoppingIndex else {
+            currentShoppingCellIndex = nil
+            return
+        }
+        
+        var gridStartIndex = 0
+        if isValueEnabled {
+            switch experience {
+            case .list:
+                gridStartIndex = 1
+            case .grid, .carousel:
+                gridStartIndex = (columnCount <= 2) ? 1 : 2
+            }
+        }
+        
+        var finalIndex: Int
+        if baseShoppingIndex >= gridStartIndex {
+            let indexRelativeToGrid = baseShoppingIndex - gridStartIndex
+            let offset = indexRelativeToGrid % columnCount
+            
+            if offset == 0 {
+                finalIndex = baseShoppingIndex
+            } else {
+                finalIndex = baseShoppingIndex - offset + columnCount
+            }
+        } else {
+            finalIndex = gridStartIndex
+        }
+        
+        if finalIndex < realItemCount {
+            currentShoppingCellIndex = finalIndex
+        } else {
+            currentShoppingCellIndex = nil
+        }
+    }
+    
+    // MARK: - Private Methods
+    
+    private func updateShoppingState(columnCount: Int, shouldNotify: Bool) {
+        updateShoppingCellIndex(columnCount: columnCount)
+        updateShoppingPlaceholderPosition(shouldNotify: shouldNotify)
+    }
+    
+    private func updateShoppingPlaceholderPosition(shouldNotify: Bool) {
+        guard let tab = currentTab,
+              var sections = sectionsByTab[tab] else { return }
+        
+        // Find grid section
+        guard let gridSectionIndex = sections.firstIndex(where: { $0.type == .grid }),
+              var gridSection = sections[safe: gridSectionIndex] else { return }
+        
+        // Remove existing placeholder
+        if let placeholderId = shoppingPlaceholderId {
+            gridSection.items.removeAll {
+                ($0 as? ContentModel)?.id == placeholderId
+            }
+            shoppingPlaceholderId = nil
+        }
+        
+        // Add new placeholder if needed
+        if isShoppingEnabled,
+           let shoppingIndex = currentShoppingCellIndex,
+           shoppingIndex <= gridSection.items.count {
+            let placeholder = ContentModel.emptyShoppingPlaceholder()
+            shoppingPlaceholderId = placeholder.id
+            gridSection.items.insert(placeholder, at: shoppingIndex)
+        }
+        
+        sections[gridSectionIndex] = gridSection
+        sectionsByTab[tab] = sections
+        
+        if shouldNotify {
+            onSectionsDidUpdate?()
+        }
+    }
+    
+    private func setupInitialData() {
+        for tab in tabData {
+            sectionsByTab[tab] = createSections(for: tab)
+        }
+    }
+    
+    private func createSections(for tab: TabItem) -> [Section] {
+        let prefix = tab.title.replacingOccurrences(of: "Categoría", with: "Contenido")
+        
+        let sharedModels = (0..<3).map { i in
+            ContentModel.carouselItem(index: i, prefix: "\(prefix) (Compartido)", isHighlighted: true)
+        }
+        
+        var sections: [Section] = [
+            createGeneralInfoSection(prefix: prefix),
+            createCarouselSection(prefix: prefix, sharedItems: sharedModels)
+        ]
+        
+        switch experience {
+        case .list:
+            // Add list sections
+            let firstListItem = ContentModel.gridItem(index: 0, prefix: prefix, isValue: isValueEnabled)
+            sections.append(createListSection(item: firstListItem))
+            
+            for sharedModel in sharedModels {
+                sections.append(createListSection(item: sharedModel))
+            }
+            
+            for i in 1..<100 {
+                let listItem = ContentModel.gridItem(index: i, prefix: prefix, isValue: false)
+                sections.append(createListSection(item: listItem))
+            }
+            
+        case .grid, .carousel:
+            let itemCount = 100 + (Int(tab.title.last?.wholeNumberValue ?? 1) * 3)
+            sections.append(createGridSection(prefix: prefix, itemCount: itemCount, sharedItems: sharedModels))
+        }
+        
+        sections.append(createFooterSection(prefix: prefix))
+        return sections
+    }
+    
+    private func createGeneralInfoSection(prefix: String) -> Section {
+        let items: [any ContentItem] = [
+            InfoModel(title: "\(prefix) Info Item 1", subtitle: "General info subtitle"),
+            InfoModel(title: "\(prefix) Info Item 2", subtitle: "Another subtitle")
+        ]
+        return Section(type: .info, header: nil, items: items)
+    }
+    
+    private func createCarouselSection(prefix: String, sharedItems: [ContentModel]) -> Section {
+        var items: [any ContentItem] = sharedItems
+        
+        let regularItems = (0..<12).map { i in
+            ContentModel.carouselItem(index: i, prefix: prefix, isHighlighted: i % 4 == 0)
+        }
+        items.append(contentsOf: regularItems)
+        
+        // FIX: Use actual tabData instead of empty array
+        let header = SectionHeader.tabBar(tabs: self.tabData, selectedIndex: self.selectedTabIndex)
+        return Section(type: .carousel, header: header, items: items)
+    }
+    
+    private func createGridSection(prefix: String, itemCount: Int, sharedItems: [ContentModel]) -> Section {
+        var items: [any ContentItem] = []
+        
+        let firstItem = ContentModel.gridItem(index: 0, prefix: prefix, isValue: isValueEnabled)
+        items.append(firstItem)
+        
+        items.append(contentsOf: sharedItems)
+        
+        let remainingItems = (1..<itemCount).map { i in
+            ContentModel.gridItem(index: i, prefix: prefix, isValue: false)
+        }
+        items.append(contentsOf: remainingItems)
+        
+        let header = SectionHeader.title("Explorar Contenido")
+        return Section(type: .grid, header: header, items: items)
+    }
+    
+    private func createListSection(item: ContentModel) -> Section {
+        let header = SectionHeader.list(item)
+        return Section(type: .list, header: header, items: [item])
+    }
+    
+    private func createFooterSection(prefix: String) -> Section {
+        let items: [any ContentItem] = [
+            FooterModel(title: "\(prefix) Footer", subtitle: "Additional footer details")
+        ]
+        return Section(type: .footer, header: .title("Test"), items: items)
+    }
+    
+    // MARK: - Debug Helper
+    func debugPrintSections() {
+        print("=== Debug: Current Sections ===")
+        for (index, section) in sections.enumerated() {
+            print("Section \(index): Type = \(section.type)")
+            if let header = section.header {
+                switch header {
+                case .tabBar(let tabs, let selected):
+                    print("  Header: TabBar with \(tabs.count) tabs, selected: \(selected)")
+                    for (i, tab) in tabs.enumerated() {
+                        print("    Tab \(i): \(tab.title)")
+                    }
+                case .title(let title):
+                    print("  Header: Title = \(title)")
+                case .list(_):
+                    print("  Header: List")
+                }
+            }
+            print("  Items: \(section.items.count)")
+        }
+        print("==============================")
+    }
+}
+
+// MARK: - ContentModel Factory Extensions
 extension ContentModel {
     static func carouselItem(index: Int, prefix: String, isHighlighted: Bool = false) -> ContentModel {
         let tag: String? = isHighlighted ? "Destacado" : nil
@@ -142,617 +615,6 @@ extension ContentModel {
     }
 }
 
-enum SendableItem: Hashable, Sendable {
-    case info(model: InfoModel)
-    case carousel(items: [ContentModel])
-    case grid(item: ContentModel)
-    case list(item: ContentModel)
-    case footer(models: [FooterModel])
-}
-
-enum SectionContent: Hashable, Sendable {
-    case generalInfo(header: SectionHeader?, items: [InfoModel])
-    case carousel(header: SectionHeader?, items: [ContentModel])
-    case grid(header: SectionHeader?, items: [ContentModel])
-    case list(header: SectionHeader?, item: ContentModel)
-    case footer(header: SectionHeader?, items: [FooterModel])
-}
-
-struct Section: Hashable, Sendable {
-    let id = UUID()
-    var content: SectionContent
-    
-    var header: SectionHeader? {
-        switch content {
-        case .generalInfo(let header, _),
-             .carousel(let header, _),
-             .grid(let header, _),
-             .list(let header, _),
-             .footer(let header, _):
-            return header
-        }
-    }
-    
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-    }
-    
-    static func == (lhs: Section, rhs: Section) -> Bool {
-        return lhs.id == rhs.id
-    }
-}
-
-// MARK: - Data Manager
-// =================================================================================
-@MainActor
-class SectionDataManager {
-    
-    private var sectionsByTab: [TabItem: [Section]] = [:]
-    private var shoppingPlaceholderId: UUID?
-    var isValueEnabled: Bool
-    var isVideoEnabled: Bool
-    var isShoppingEnabled: Bool
-    var experience: ExperienceType
-    
-    var tabData: [TabItem] = (0..<8).map { TabItem(title: "Categoría \($0 + 1)") }
-    private(set) var selectedTabIndex: Int = 0
-    
-    var onSectionsDidUpdate: (() -> Void)?
-    
-    private var currentTab: TabItem? {
-        return tabData[safe: selectedTabIndex]
-    }
-    
-    private(set) var currentShoppingCellIndex: Int? {
-        didSet {
-            if currentShoppingCellIndex != oldValue {
-                updateShoppingPlaceholderPosition(shouldNotify: false)
-            }
-        }
-    }
-
-    init(isValueEnabled: Bool = false, isVideoEnabled: Bool = false, isShoppingEnabled: Bool = false, experience: ExperienceType = .grid) {
-        self.isValueEnabled = isValueEnabled
-        self.isVideoEnabled = isVideoEnabled
-        self.isShoppingEnabled = isShoppingEnabled
-        self.experience = experience
-        setupInitialData()
-        
-        if isShoppingEnabled {
-            updateShoppingState(columnCount: 2, shouldNotify: false)
-        }
-    }
-    
-    func setSelectedTabIndex(_ index: Int, columnCount: Int) {
-        guard index != selectedTabIndex, tabData.indices.contains(index) else { return }
-        selectedTabIndex = index
-        updateShoppingState(columnCount: columnCount, shouldNotify: true)
-    }
-
-    func setIsShoppingEnabled(_ isEnabled: Bool, columnCount: Int) {
-        guard isEnabled != isShoppingEnabled else { return }
-        isShoppingEnabled = isEnabled
-        updateShoppingState(columnCount: columnCount, shouldNotify: true)
-    }
-
-    func updateStateForLayoutChange(columnCount: Int) {
-        let oldIndex = self.currentShoppingCellIndex
-        updateShoppingCellIndex(columnCount: columnCount)
-        
-        if oldIndex != self.currentShoppingCellIndex {
-            updateShoppingPlaceholderPosition(shouldNotify: false)
-        }
-    }
-    
-    private func updateShoppingState(columnCount: Int, shouldNotify: Bool) {
-        updateShoppingCellIndex(columnCount: columnCount)
-        updateShoppingPlaceholderPosition(shouldNotify: shouldNotify)
-    }
-    
-    private func updateShoppingPlaceholderPosition(shouldNotify: Bool) {
-        guard let tab = currentTab, var sections = sectionsByTab[tab] else { return }
-        
-        guard let gridSectionIndex = sections.firstIndex(where: {
-            if case .grid = $0.content {
-                return true
-            }
-            return false
-        }) else { return }
-        
-        var gridSection = sections[gridSectionIndex]
-        guard case .grid(let header, var items) = gridSection.content else {
-            return
-        }
-        
-        if let placeholderId = shoppingPlaceholderId {
-            items.removeAll { $0.id == placeholderId }
-            shoppingPlaceholderId = nil
-        }
-        
-        if isShoppingEnabled, let shoppingIndex = currentShoppingCellIndex, shoppingIndex <= items.count {
-            let placeholder = ContentModel.emptyShoppingPlaceholder()
-            shoppingPlaceholderId = placeholder.id
-            items.insert(placeholder, at: shoppingIndex)
-        }
-        
-        gridSection.content = .grid(header: header, items: items)
-        sections[gridSectionIndex] = gridSection
-        sectionsByTab[tab] = sections
-        
-        if shouldNotify {
-            onSectionsDidUpdate?()
-        }
-    }
-    
-    subscript(section index: Int) -> Section? {
-        get {
-            guard let tab = currentTab,
-                  let sections = sectionsByTab[tab],
-                  sections.indices.contains(index) else {
-                return nil
-            }
-            return sections[index]
-        }
-        set {
-            guard let tab = currentTab,
-                  let newValue = newValue,
-                  sectionsByTab[tab]?.indices.contains(index) == true else {
-                return
-            }
-            sectionsByTab[tab]?[index] = newValue
-        }
-    }
-    
-    subscript(itemAt indexPath: IndexPath) -> Any? {
-        get {
-            guard let content = self[section: indexPath.section]?.content else { return nil }
-            
-            switch content {
-            case .generalInfo(_, let items):
-                return items[safe: indexPath.item]
-            case .carousel(_, let items):
-                return items
-            case .grid(_, let items):
-                return items[safe: indexPath.item]
-            case .list(_, let item):
-                return item
-            case .footer(_, let items):
-                return items[safe: indexPath.item]
-            }
-        }
-        set {
-            guard var sectionToUpdate = self[section: indexPath.section] else {
-                return
-            }
-            
-            var newContent = sectionToUpdate.content
-            var modelToSync: ContentModel?
-            
-            switch newContent {
-            case .generalInfo(let header, var items):
-                if let newItem = newValue as? InfoModel, items.indices.contains(indexPath.item) {
-                    items[indexPath.item] = newItem
-                    newContent = .generalInfo(header: header, items: items)
-                }
-            case .carousel(let header, _):
-                if let newItems = newValue as? [ContentModel] {
-                    newContent = .carousel(header: header, items: newItems)
-                }
-            case .grid(let header, var items):
-                if let newItem = newValue as? ContentModel, items.indices.contains(indexPath.item) {
-                    if items[indexPath.item].isShoppingPlaceholder {
-                        return
-                    }
-                    items[indexPath.item] = newItem
-                    newContent = .grid(header: header, items: items)
-                    modelToSync = newItem
-                }
-            case .list(let header, _):
-                if let newItem = newValue as? ContentModel {
-                    newContent = .list(header: header, item: newItem)
-                    modelToSync = newItem
-                }
-            case .footer(let header, var items):
-                if let newItem = newValue as? FooterModel, items.indices.contains(indexPath.item) {
-                    items[indexPath.item] = newItem
-                    newContent = .footer(header: header, items: items)
-                }
-            }
-            
-            sectionToUpdate.content = newContent
-            self[section: indexPath.section] = sectionToUpdate
-            
-            if let model = modelToSync {
-                updateContentModel(model)
-            }
-        }
-    }
-    
-    subscript(headerFor sectionIndex: Int) -> SectionHeader? {
-        get {
-            guard var headerModel = self[section: sectionIndex]?.header else {
-                return nil
-            }
-            if case .tabBar = headerModel {
-                headerModel = .tabBar(tabs: self.tabData, selectedIndex: self.selectedTabIndex)
-            }
-            return headerModel
-        }
-        set {
-            guard let tab = currentTab,
-                  var sections = sectionsByTab[tab],
-                  sections.indices.contains(sectionIndex) else {
-                return
-            }
-            
-            var section = sections[sectionIndex]
-            switch section.content {
-            case .generalInfo(_, let items):
-                section.content = .generalInfo(header: newValue, items: items)
-            case .carousel(_, let items):
-                section.content = .carousel(header: newValue, items: items)
-            case .grid(_, let items):
-                section.content = .grid(header: newValue, items: items)
-            case .list(_, let item):
-                section.content = .list(header: newValue, item: item)
-            case .footer(_, let items):
-                section.content = .footer(header: newValue, items: items)
-            }
-            
-            sections[sectionIndex] = section
-            sectionsByTab[tab] = sections
-        }
-    }
-    
-    var sections: [Section] {
-        sectionsByTab[currentTab ?? TabItem(title: "")] ?? []
-    }
-
-    func numberOfSections() -> Int {
-        sections.count
-    }
-
-    func numberOfItems(in sectionIndex: Int) -> Int {
-        guard let content = self[section: sectionIndex]?.content else {
-            return 0
-        }
-        switch content {
-        case .generalInfo(_, let items):
-            return items.count
-        case .carousel:
-            return 1
-        case .grid(_, let items):
-            return items.count
-        case .list(_, let item):
-            return item.isDetailsVisible ? 1 : 0
-        case .footer(_, let items):
-            return items.count
-        }
-    }
-
-    func updateShoppingCellIndex(columnCount: Int) {
-        self.currentShoppingCellIndex = nil
-        
-        guard let currentTab,
-              let sections = sectionsByTab[currentTab],
-              let gridSection = sections.first(where: {
-                  if case .grid = $0.content {
-                      return true
-                  }
-                  return false
-              }),
-              case .grid(_, let items) = gridSection.content else {
-            return
-        }
-        
-        let realItemCount = items.filter { !$0.isShoppingPlaceholder }.count
-        let baseShoppingIndex = 19
-
-        guard isShoppingEnabled && realItemCount > baseShoppingIndex else {
-            self.currentShoppingCellIndex = nil
-            return
-        }
-
-        var gridStartIndex = 0
-        if isValueEnabled {
-            switch experience {
-            case .list:
-                gridStartIndex = 1
-            case .grid, .carousel:
-                gridStartIndex = (columnCount <= 2) ? 1 : 2
-            }
-        }
-        
-        var finalIndex: Int
-        if baseShoppingIndex >= gridStartIndex {
-            let indexRelativeToGrid = baseShoppingIndex - gridStartIndex
-            let offset = indexRelativeToGrid % columnCount
-            
-            if offset == 0 {
-                finalIndex = baseShoppingIndex
-            } else {
-                finalIndex = baseShoppingIndex - offset + columnCount
-            }
-        } else {
-            finalIndex = gridStartIndex
-        }
-        
-        if finalIndex < realItemCount {
-            self.currentShoppingCellIndex = finalIndex
-        } else {
-            self.currentShoppingCellIndex = nil
-        }
-    }
-
-    func shouldUseValueCell(at indexPath: IndexPath) -> Bool {
-        guard let content = self[section: indexPath.section]?.content else { return false }
-        switch content {
-        case .grid(_, let items):
-            guard let item = items[safe: indexPath.item], !item.isShoppingPlaceholder else { return false }
-            return isValueEnabled && indexPath.item == 0
-        default:
-            return false
-        }
-    }
-    
-    func shouldUseShoppingCell(at indexPath: IndexPath) -> Bool {
-        guard let content = self[section: indexPath.section]?.content else { return false }
-        
-        switch content {
-        case .grid(_, let items):
-            if let item = items[safe: indexPath.item] {
-                return item.isShoppingPlaceholder
-            }
-            return false
-        default:
-            return false
-        }
-    }
-    
-    func updateContentModel(_ updatedModel: ContentModel) {
-        if updatedModel.isShoppingPlaceholder { return }
-        
-        var needsUpdate = false
-        for (tab, sections) in sectionsByTab {
-            var updatedSections = sections
-            var sectionWasUpdated = false
-            for (sectionIndex, section) in sections.enumerated() {
-                var updatedSection = section
-                switch section.content {
-                    
-                case .carousel(let header, var items):
-                    var itemsWereUpdated = false
-                    for (itemIndex, item) in items.enumerated() {
-                        if item.id == updatedModel.id && !item.isShoppingPlaceholder {
-                            items[itemIndex] = updatedModel
-                            itemsWereUpdated = true
-                        }
-                    }
-                    
-                    if itemsWereUpdated {
-                        updatedSection.content = .carousel(header: header, items: items)
-                        updatedSections[sectionIndex] = updatedSection
-                        sectionWasUpdated = true
-                    }
-                    
-                case .grid(let header, var items):
-                    var itemsWereUpdated = false
-                    for (itemIndex, item) in items.enumerated() {
-                        if item.id == updatedModel.id && !item.isShoppingPlaceholder {
-                            items[itemIndex] = updatedModel
-                            itemsWereUpdated = true
-                        }
-                    }
-                    
-                    if itemsWereUpdated {
-                        updatedSection.content = .grid(header: header, items: items)
-                        updatedSections[sectionIndex] = updatedSection
-                        sectionWasUpdated = true
-                    }
-                    
-                case .list(let header, let item):
-                    if item.id == updatedModel.id && !item.isShoppingPlaceholder {
-                        var newHeader = header
-                        if case .list = header {
-                            newHeader = .list(updatedModel)
-                        }
-                        updatedSection.content = .list(header: newHeader, item: updatedModel)
-                        updatedSections[sectionIndex] = updatedSection
-                        sectionWasUpdated = true
-                    }
-                    
-                default:
-                    break
-                }
-            }
-            if sectionWasUpdated {
-                sectionsByTab[tab] = updatedSections
-                needsUpdate = true
-            }
-        }
-        
-        if needsUpdate, onSectionsDidUpdate != nil {
-            DispatchQueue.main.async {
-                self.onSectionsDidUpdate?()
-            }
-        }
-    }
-    
-    func updateContentModels(_ updatedModels: [ContentModel]) {
-        var needsUpdate = false
-        let modelsDict = Dictionary(uniqueKeysWithValues: updatedModels.compactMap {
-            $0.isShoppingPlaceholder ? nil : ($0.id, $0)
-        })
-        
-        for (tab, sections) in sectionsByTab {
-            var updatedSections = sections
-            var sectionWasUpdated = false
-            
-            for (sectionIndex, section) in sections.enumerated() {
-                var updatedSection = section
-                
-                switch section.content {
-                case .carousel(let header, var items):
-                    var itemsWereUpdated = false
-                    for (index, item) in items.enumerated() {
-                        if let updatedModel = modelsDict[item.id] {
-                            items[index] = updatedModel
-                            itemsWereUpdated = true
-                        }
-                    }
-                    if itemsWereUpdated {
-                        updatedSection.content = .carousel(header: header, items: items)
-                        updatedSections[sectionIndex] = updatedSection
-                        sectionWasUpdated = true
-                    }
-                case .grid(let header, var items):
-                    var itemsWereUpdated = false
-                    for (index, item) in items.enumerated() {
-                        if let updatedModel = modelsDict[item.id] {
-                            items[index] = updatedModel
-                            itemsWereUpdated = true
-                        }
-                    }
-                    if itemsWereUpdated {
-                        updatedSection.content = .grid(header: header, items: items)
-                        updatedSections[sectionIndex] = updatedSection
-                        sectionWasUpdated = true
-                    }
-                    
-                case .list(let header, let item):
-                    if let updatedModel = modelsDict[item.id] {
-                        var newHeader = header
-                        if case .list = header {
-                            newHeader = .list(updatedModel)
-                        }
-                        updatedSection.content = .list(header: newHeader, item: updatedModel)
-                        updatedSections[sectionIndex] = updatedSection
-                        sectionWasUpdated = true
-                    }
-
-                default:
-                    break
-                }
-            }
-            if sectionWasUpdated {
-                sectionsByTab[tab] = updatedSections
-                needsUpdate = true
-            }
-        }
-        
-        if needsUpdate {
-            onSectionsDidUpdate?()
-        }
-    }
-    
-    func resetData() {
-        shoppingPlaceholderId = nil
-        setupInitialData()
-        selectedTabIndex = 0
-    }
-    
-    func reloadTab(at index: Int) {
-        guard tabData.indices.contains(index),
-              let tab = tabData[safe: index] else { return }
-        
-        sectionsByTab[tab] = createSections(for: tab)
-    }
-    
-    func setSelectedTabIndex(_ index: Int) {
-        guard index != selectedTabIndex, tabData.indices.contains(index) else { return }
-        selectedTabIndex = index
-    }
-    
-    private func setupInitialData() {
-        for tab in tabData {
-            sectionsByTab[tab] = createSections(for: tab)
-        }
-    }
-
-    private func createSections(for tab: TabItem) -> [Section] {
-        let prefix = tab.title.replacingOccurrences(of: "Categoría", with: "Contenido")
-        let itemCount = 100 + (Int(tab.title.last?.wholeNumberValue ?? 1) * 3)
-        
-        let sharedModels = (0..<3).map { i in
-            ContentModel.carouselItem(index: i, prefix: "\(prefix) (Compartido)", isHighlighted: true)
-        }
-        
-        var sections: [Section] = [
-            createGeneralInfoSection(prefix: prefix),
-            createCarouselSection(prefix: prefix, sharedItems: sharedModels)
-        ]
-        
-        switch self.experience {
-        case .list:
-            let firstListItem = ContentModel.gridItem(index: 0, prefix: prefix, isValue: self.isValueEnabled)
-            sections.append(createListSection(item: firstListItem))
-            
-            for sharedModel in sharedModels {
-                sections.append(createListSection(item: sharedModel))
-            }
-            
-            for i in 1..<100 {
-                let listItem = ContentModel.gridItem(index: i, prefix: prefix, isValue: false)
-                sections.append(createListSection(item: listItem))
-            }
-
-        case .grid, .carousel:
-            sections.append(createGridSection(prefix: prefix, itemCount: itemCount, sharedItems: sharedModels))
-        }
-        
-        sections.append(createFooterSection(prefix: prefix))
-        return sections
-    }
-    
-    private func createGeneralInfoSection(prefix: String) -> Section {
-        let items = [
-            InfoModel(title: "\(prefix) Info Item 1", subtitle: "General info subtitle"),
-            InfoModel(title: "\(prefix) Info Item 2", subtitle: "Another subtitle")
-        ]
-        return Section(content: .generalInfo(header: nil, items: items))
-    }
-
-    private func createCarouselSection(prefix: String, sharedItems: [ContentModel]) -> Section {
-        var items = sharedItems
-        
-        let regularItems = (0..<12).map { i in
-            ContentModel.carouselItem(index: i, prefix: prefix, isHighlighted: i % 4 == 0)
-        }
-        items.append(contentsOf: regularItems)
-        
-        let header = SectionHeader.tabBar(tabs: [], selectedIndex: 0)
-        return Section(content: .carousel(header: header, items: items))
-    }
-
-    private func createGridSection(prefix: String, itemCount: Int, sharedItems: [ContentModel]) -> Section {
-        var items: [ContentModel] = []
-        
-        let firstItem = ContentModel.gridItem(index: 0, prefix: prefix, isValue: self.isValueEnabled)
-        items.append(firstItem)
-        
-        items.append(contentsOf: sharedItems)
-        
-        let remainingItems = (1..<itemCount).map { i in
-            ContentModel.gridItem(index: i, prefix: prefix, isValue: false)
-        }
-        items.append(contentsOf: remainingItems)
-        
-        let header = SectionHeader.title("Explorar Contenido")
-        return Section(content: .grid(header: header, items: items))
-    }
-    
-    private func createListSection(item: ContentModel) -> Section {
-        let header = SectionHeader.list(item)
-        return Section(content: .list(header: header, item: item))
-    }
-
-    private func createFooterSection(prefix: String) -> Section {
-        let items = [FooterModel(title: "\(prefix) Footer", subtitle: "Additional footer details")]
-        return Section(content: .footer(header: .title("Test"), items: items))
-    }
-}
-
-
 // MARK: - Reusable Views & Headers
 // =================================================================================
 final class TitleHeaderView: UICollectionReusableView {
@@ -783,53 +645,6 @@ final class TitleHeaderView: UICollectionReusableView {
 
     func configure(with title: String) {
         titleLabel.text = title
-    }
-}
-
-final class TabBarHeaderView: UICollectionReusableView, TabBarViewDelegate {
-    
-    weak var delegate: TabBarViewDelegate?
-    private let tabBarView = TabBarView<TabItem, TabCell>()
-    
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        tabBarView.delegate = self
-        setupSubviews()
-    }
-    
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-    
-    func setupSubviews() {
-        backgroundColor = .systemBackground
-        tabBarView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(tabBarView)
-        
-        NSLayoutConstraint.activate([
-            tabBarView.topAnchor.constraint(equalTo: topAnchor),
-            tabBarView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            tabBarView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            tabBarView.trailingAnchor.constraint(equalTo: trailingAnchor)
-        ])
-    }
-    
-    func configure(with tabs: [TabItem], selectedIndex: Int, horizontalPadding: CGFloat) {
-        tabBarView.configure(with: tabs, selectedIndex: selectedIndex)
-        directionalLayoutMargins = NSDirectionalEdgeInsets(
-            top: 0,
-            leading: horizontalPadding,
-            bottom: 0,
-            trailing: horizontalPadding
-        )
-    }
-    
-    func tabBarView(didSelectTabAt index: Int) {
-        delegate?.tabBarView(didSelectTabAt: index)
-    }
-    
-    func tabBarViewRequiresLayoutUpdate() {
-        delegate?.tabBarViewRequiresLayoutUpdate()
     }
 }
 
@@ -1881,37 +1696,9 @@ protocol TabCellConfigurable: UICollectionViewCell {
     var a11yTitle: String? { get }
 }
 
-class TabCell: UICollectionViewCell, TabCellConfigurable {
-    typealias Item = TabItem
-    var a11yTitle: String? { return titleLabel.text }
-    let titleLabel: UILabel = {
-        let label = UILabel()
-        label.font = UIFont.preferredFont(forTextStyle: .headline)
-        label.adjustsFontForContentSizeCategory = true
-        label.textAlignment = .center
-        label.translatesAutoresizingMaskIntoConstraints = false
-        return label
-    }()
-    override var isSelected: Bool { didSet { titleLabel.textColor = isSelected ? .systemBlue : .label } }
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        setupViews()
-    }
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    private func setupViews() {
-        contentView.addSubview(titleLabel)
-        NSLayoutConstraint.activate([
-            titleLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
-            titleLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
-            titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
-        ])
-    }
-    func configure(with item: TabItem) {
-        titleLabel.text = item.title
-    }
-}
+import UIKit
 
+// MARK: - TabBarView Corregido
 @MainActor
 protocol TabBarViewDelegate: AnyObject {
     func tabBarView(didSelectTabAt index: Int)
@@ -2059,6 +1846,85 @@ class TabBarView<Item: Hashable&Sendable, Cell: TabCellConfigurable>: UIView, UI
     }
 }
 
+// MARK: - TabCell mejorado
+class TabCell: UICollectionViewCell, TabCellConfigurable {
+    typealias Item = TabItem
+    var a11yTitle: String? { return titleLabel.text }
+    let titleLabel: UILabel = {
+        let label = UILabel()
+        label.font = UIFont.preferredFont(forTextStyle: .headline)
+        label.adjustsFontForContentSizeCategory = true
+        label.textAlignment = .center
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+    override var isSelected: Bool { didSet { titleLabel.textColor = isSelected ? .systemBlue : .label } }
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setupViews()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    private func setupViews() {
+        contentView.addSubview(titleLabel)
+        NSLayoutConstraint.activate([
+            titleLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
+            titleLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
+            titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
+        ])
+    }
+    func configure(with item: TabItem) {
+        titleLabel.text = item.title
+    }
+}
+
+// MARK: - TabBarHeaderView actualizado
+final class TabBarHeaderView: UICollectionReusableView, TabBarViewDelegate {
+    
+    weak var delegate: TabBarViewDelegate?
+    private let tabBarView = TabBarView<TabItem, TabCell>()
+    
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        tabBarView.delegate = self
+        setupSubviews()
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    func setupSubviews() {
+        backgroundColor = .systemBackground
+        tabBarView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(tabBarView)
+        
+        NSLayoutConstraint.activate([
+            tabBarView.topAnchor.constraint(equalTo: topAnchor),
+            tabBarView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            tabBarView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            tabBarView.trailingAnchor.constraint(equalTo: trailingAnchor)
+        ])
+    }
+    
+    func configure(with tabs: [TabItem], selectedIndex: Int, horizontalPadding: CGFloat) {
+        tabBarView.configure(with: tabs, selectedIndex: selectedIndex)
+        directionalLayoutMargins = NSDirectionalEdgeInsets(
+            top: 0,
+            leading: horizontalPadding,
+            bottom: 0,
+            trailing: horizontalPadding
+        )
+    }
+    
+    func tabBarView(didSelectTabAt index: Int) {
+        delegate?.tabBarView(didSelectTabAt: index)
+    }
+    
+    func tabBarViewRequiresLayoutUpdate() {
+        delegate?.tabBarViewRequiresLayoutUpdate()
+    }
+}
 
 // MARK: - Custom Layout
 // =================================================================================
@@ -2188,21 +2054,37 @@ final class ListDetailCell: UICollectionViewCell {
     }
 }
 
+struct ItemIdentifier: Hashable, Sendable {
+    let id: UUID
+    let sectionId: UUID
+    let type: ItemType
+    
+    enum ItemType: Hashable, Sendable {
+        case single(UUID)  // For regular items
+        case carousel     // For carousel container
+    }
+}
+
+import UIKit
+
+// MARK: - ViewController con nueva estructura
 @MainActor
 final class ViewController: UIViewController {
     
+    // MARK: - Properties
     private var sectionDataManager: SectionDataManager!
     private var collectionView: UICollectionView!
     
-    // Ahora usamos AnyHashable directamente en lugar de Item
-    private typealias DataSource = UICollectionViewDiffableDataSource<Section, SendableItem>
-    private typealias Snapshot = NSDiffableDataSourceSnapshot<Section, SendableItem>
+    // Simplified type alias - no more SendableItem
+    private typealias DataSource = UICollectionViewDiffableDataSource<Section, ItemIdentifier>
+    private typealias Snapshot = NSDiffableDataSourceSnapshot<Section, ItemIdentifier>
     
     private var dataSource: DataSource!
     
     private let cellSpacing: CGFloat = 16.0
     private var expandedListSection: Int?
     
+    // Cache for cell heights
     private var cachedGridCellHeight: CGFloat?
     private var shouldRecalculateGridHeight = true
     private var cachedCarouselCellHeight: CGFloat?
@@ -2215,26 +2097,19 @@ final class ViewController: UIViewController {
         return 16.0
     }
     
+    // MARK: - Lifecycle
     override func viewDidLoad() {
         super.viewDidLoad()
         setupDataManager()
         setupView()
         setupNotifications()
         configureCollectionView()
-        
         configureDataSource()
         applySnapshot(animatingDifferences: false)
         
-        if let carouselSectionIndex = sectionDataManager.sections.firstIndex(where: {
-            if case .carousel = $0.content { return true }
-            return false
-        }) {
+        if let carouselSectionIndex = sectionDataManager.sections.firstIndex(where: { $0.type == .carousel }) {
             (collectionView.collectionViewLayout as? StickyCarouselHeaderLayout)?.stickyHeaderSection = carouselSectionIndex
         }
-    }
-    
-    deinit {
-        NotificationCenter.default.removeObserver(self)
     }
     
     override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
@@ -2244,11 +2119,24 @@ final class ViewController: UIViewController {
         })
     }
     
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.horizontalSizeClass != previousTraitCollection?.horizontalSizeClass ||
+           traitCollection.verticalSizeClass != previousTraitCollection?.verticalSizeClass {
+            invalidateCacheAndApplySnapshot()
+        }
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+    
+    // MARK: - Setup Methods
     private func setupDataManager() {
         sectionDataManager = SectionDataManager(
             isValueEnabled: true,
             isShoppingEnabled: true,
-            experience: .grid
+            experience: .list
         )
         sectionDataManager.onSectionsDidUpdate = { [weak self] in
             self?.handleDataUpdate()
@@ -2260,7 +2148,12 @@ final class ViewController: UIViewController {
     }
     
     private func setupNotifications() {
-        NotificationCenter.default.addObserver(self, selector: #selector(contentSizeCategoryDidChange), name: UIContentSizeCategory.didChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(contentSizeCategoryDidChange),
+            name: UIContentSizeCategory.didChangeNotification,
+            object: nil
+        )
     }
     
     private func configureCollectionView() {
@@ -2275,6 +2168,7 @@ final class ViewController: UIViewController {
     }
     
     private func registerCellsAndHeaders() {
+        // Register cells
         collectionView.register(InfoCell.self, forCellWithReuseIdentifier: InfoCell.reuseIdentifier)
         collectionView.register(CarouselCell.self, forCellWithReuseIdentifier: CarouselCell.reuseIdentifier)
         collectionView.register(ValueCell.self, forCellWithReuseIdentifier: ValueCell.reuseIdentifier)
@@ -2282,14 +2176,14 @@ final class ViewController: UIViewController {
         collectionView.register(TitleSubtitleCell.self, forCellWithReuseIdentifier: TitleSubtitleCell.reuseIdentifier)
         collectionView.register(FooterCell.self, forCellWithReuseIdentifier: FooterCell.reuseIdentifier)
         collectionView.register(ListDetailCell.self, forCellWithReuseIdentifier: ListDetailCell.reuseIdentifier)
-        collectionView.register(UICollectionViewCell.self, forCellWithReuseIdentifier: "cell")
         
+        // Register headers
         collectionView.register(TitleHeaderView.self, forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader, withReuseIdentifier: TitleHeaderView.reuseIdentifier)
         collectionView.register(TabBarHeaderView.self, forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader, withReuseIdentifier: TabBarHeaderView.reuseIdentifier)
         collectionView.register(ListHeaderView.self, forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader, withReuseIdentifier: ListHeaderView.reuseIdentifier)
         collectionView.register(UICollectionReusableView.self, forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader, withReuseIdentifier: "blankHeader")
     }
-
+    
     private func setupConstraints() {
         NSLayoutConstraint.activate([
             collectionView.topAnchor.constraint(equalTo: view.topAnchor),
@@ -2299,20 +2193,9 @@ final class ViewController: UIViewController {
         ])
     }
     
+    // MARK: - Data Updates
     private func handleDataUpdate() {
         invalidateCacheAndApplySnapshot()
-    }
-
-    @objc private func contentSizeCategoryDidChange() {
-        invalidateCacheAndApplySnapshot()
-    }
-    
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        if traitCollection.horizontalSizeClass != previousTraitCollection?.horizontalSizeClass ||
-           traitCollection.verticalSizeClass != previousTraitCollection?.verticalSizeClass {
-            invalidateCacheAndApplySnapshot()
-        }
     }
     
     private func invalidateCacheAndApplySnapshot() {
@@ -2322,60 +2205,43 @@ final class ViewController: UIViewController {
         applySnapshot()
     }
     
-    private func toggleListDetails(at sectionIndex: Int) {
-        let previouslyExpanded = expandedListSection
-        let isCollapsing = previouslyExpanded == sectionIndex
-        
-        if let oldIndex = previouslyExpanded, !isCollapsing {
-            if var oldModel = sectionDataManager[itemAt: IndexPath(item: 0, section: oldIndex)] as? ContentModel {
-                oldModel.isDetailsVisible = false
-                sectionDataManager.updateContentModel(oldModel)
-            }
-        }
-        
-        if var currentModel = sectionDataManager[itemAt: IndexPath(item: 0, section: sectionIndex)] as? ContentModel {
-            currentModel.isDetailsVisible.toggle()
-            sectionDataManager.updateContentModel(currentModel)
-        }
-
-        expandedListSection = isCollapsing ? nil : sectionIndex
-        
-        applySnapshot()
+    @objc private func contentSizeCategoryDidChange() {
+        invalidateCacheAndApplySnapshot()
     }
-}
-
-// MARK: - Diffable Data Source
-extension ViewController {
     
+    // MARK: - Data Source Configuration
     private func configureDataSource() {
-        dataSource = DataSource(collectionView: collectionView) { [weak self] (collectionView, indexPath, item) -> UICollectionViewCell? in
+        dataSource = DataSource(collectionView: collectionView) { [weak self] (collectionView, indexPath, itemIdentifier) -> UICollectionViewCell? in
             guard let self = self else { return nil }
             
-            switch item {
-            case .info(let model):
+            // Get the actual section and item from the data manager
+            guard let section = self.sectionDataManager.getSection(at: indexPath.section) else { return nil }
+            
+            switch section.type {
+            case .info:
+                guard let model = section.items[safe: indexPath.item] as? InfoModel else { return nil }
                 let cell = collectionView.dequeueReusableCell(withReuseIdentifier: InfoCell.reuseIdentifier, for: indexPath) as! InfoCell
                 cell.configure(with: model)
                 return cell
                 
-            case .carousel(let items):
+            case .carousel:
+                // Carousel shows all items in horizontal scroll
+                let items = section.items.compactMap { $0 as? ContentModel }
                 let cell = collectionView.dequeueReusableCell(withReuseIdentifier: CarouselCell.reuseIdentifier, for: indexPath) as! CarouselCell
                 cell.configure(with: items)
                 
                 cell.onItemSelect = { [weak self] selectedModel in
                     guard let self = self else { return }
-                    
                     var updatedModel = selectedModel
                     updatedModel.isSelected.toggle()
-                    
-                    // Actualizar el modelo en el data manager
                     self.sectionDataManager.updateContentModel(updatedModel)
-                    
-                    // Recargar todas las secciones que contienen este modelo
                     self.reloadSectionsContainingModel(updatedModel)
                 }
                 return cell
                 
-            case .grid(let item):
+            case .grid:
+                guard let item = section.items[safe: indexPath.item] as? ContentModel else { return nil }
+                
                 if self.sectionDataManager.shouldUseShoppingCell(at: indexPath) {
                     let cell = collectionView.dequeueReusableCell(withReuseIdentifier: ShoppingCell.reuseIdentifier, for: indexPath) as! ShoppingCell
                     cell.configure(with: item)
@@ -2390,14 +2256,14 @@ extension ViewController {
                     return cell
                 }
                 
-            case .list(let item):
+            case .list:
+                guard let item = section.items.first as? ContentModel else { return nil }
                 let cell = collectionView.dequeueReusableCell(withReuseIdentifier: ListDetailCell.reuseIdentifier, for: indexPath) as! ListDetailCell
                 cell.configure(with: item)
                 return cell
                 
-            case .footer(let models):
-                guard indexPath.item < models.count else { return nil }
-                let model = models[indexPath.item]
+            case .footer:
+                guard let model = section.items[safe: indexPath.item] as? FooterModel else { return nil }
                 let cell = collectionView.dequeueReusableCell(withReuseIdentifier: FooterCell.reuseIdentifier, for: indexPath) as! FooterCell
                 cell.configure(with: model)
                 return cell
@@ -2405,55 +2271,122 @@ extension ViewController {
         }
         
         dataSource.supplementaryViewProvider = { [weak self] (collectionView, kind, indexPath) -> UICollectionReusableView? in
-            guard let self = self, kind == UICollectionView.elementKindSectionHeader else {
-                return collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: "blankHeader", for: indexPath)
-            }
-            
-            guard self.dataSource.snapshot().sectionIdentifiers[safe: indexPath.section] != nil,
-                  let headerModel = self.sectionDataManager[headerFor: indexPath.section] else {
-                return collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: "blankHeader", for: indexPath)
-            }
-            
-            switch headerModel {
-            case .title(let title):
-                let header = collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: TitleHeaderView.reuseIdentifier, for: indexPath) as! TitleHeaderView
-                header.configure(with: title)
-                return header
-                
-            case .tabBar(let tabs, let selectedIndex):
-                let header = collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: TabBarHeaderView.reuseIdentifier, for: indexPath) as! TabBarHeaderView
-                header.delegate = self
-                header.configure(with: tabs, selectedIndex: selectedIndex, horizontalPadding: self.horizontalPadding)
-                return header
-
-            case .list(let item):
-                let header = collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: ListHeaderView.reuseIdentifier, for: indexPath) as! ListHeaderView
-                header.configure(with: item)
-                
-                header.onHeaderSelect = { [weak self] selectedModel in
-                    guard let self = self else { return }
-                    guard !selectedModel.isLoading else { return }
-                    
-                    var loadingModel = selectedModel
-                    loadingModel.isLoading = true
-                    loadingModel.isSelected = true
-                    
-                    self.sectionDataManager.updateContentModel(loadingModel)
-                    self.reloadSectionsContainingModel(loadingModel)
-                    
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        var finishedModel = loadingModel
-                        finishedModel.isLoading = false
-                        
-                        self.sectionDataManager.updateContentModel(finishedModel)
-                        self.reloadSectionsContainingModel(finishedModel)
+                    guard let self = self, kind == UICollectionView.elementKindSectionHeader else {
+                        return collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: "blankHeader", for: indexPath)
                     }
-                }
-                
-                header.onDetailsButtonTapped = { [weak self] in
-                    self?.toggleListDetails(at: indexPath.section)
-                }
-                return header
+                    
+                    guard let headerModel = self.sectionDataManager.getHeader(for: indexPath.section) else {
+                        return collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: "blankHeader", for: indexPath)
+                    }
+                    
+                    switch headerModel {
+                    case .title(let title):
+                        let header = collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: TitleHeaderView.reuseIdentifier, for: indexPath) as! TitleHeaderView
+                        header.configure(with: title)
+                        return header
+                        
+                    case .tabBar(let tabs, let selectedIndex):
+                        let header = collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: TabBarHeaderView.reuseIdentifier, for: indexPath) as! TabBarHeaderView
+                        header.delegate = self
+                        
+                        // Ensure we have tabs to display
+                        let tabsToUse = tabs.isEmpty ? self.sectionDataManager.tabData : tabs
+                        
+                        header.configure(
+                            with: tabsToUse,
+                            selectedIndex: selectedIndex,
+                            horizontalPadding: self.horizontalPadding
+                        )
+                        return header
+                        
+                    case .list(let item):
+                        let header = collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: ListHeaderView.reuseIdentifier, for: indexPath) as! ListHeaderView
+                        header.configure(with: item)
+                        
+                        header.onHeaderSelect = { [weak self] selectedModel in
+                            guard let self = self else { return }
+                            guard !selectedModel.isLoading else { return }
+                            
+                            var loadingModel = selectedModel
+                            loadingModel.isLoading = true
+                            loadingModel.isSelected = true
+                            
+                            self.sectionDataManager.updateContentModel(loadingModel)
+                            self.reloadSectionsContainingModel(loadingModel)
+                            
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                var finishedModel = loadingModel
+                                finishedModel.isLoading = false
+                                
+                                self.sectionDataManager.updateContentModel(finishedModel)
+                                self.reloadSectionsContainingModel(finishedModel)
+                            }
+                        }
+                        
+                        header.onDetailsButtonTapped = { [weak self] in
+                            self?.toggleListDetails(at: indexPath.section)
+                        }
+                        return header
+                    }
+        }
+    }
+    
+    // MARK: - Snapshot Management
+    private func applySnapshot(animatingDifferences: Bool = true) {
+        var snapshot = Snapshot()
+        let sections = sectionDataManager.sections
+        snapshot.appendSections(sections)
+        
+        for section in sections {
+            // Create ItemIdentifiers instead of AnyHashable
+            let items: [ItemIdentifier] = createItemIdentifiers(for: section)
+            snapshot.appendItems(items, toSection: section)
+        }
+        
+        dataSource.apply(snapshot, animatingDifferences: animatingDifferences)
+    }
+    
+    private func createItemIdentifiers(for section: Section) -> [ItemIdentifier] {
+        switch section.type {
+        case .carousel:
+            // Carousel is treated as a single item container
+            if section.items.isEmpty {
+                return []
+            } else {
+                return [ItemIdentifier(
+                    id: UUID(),
+                    sectionId: section.id,
+                    type: .carousel
+                )]
+            }
+            
+        case .list:
+            // List only shows items when details are visible
+            if let contentModel = section.items.first as? ContentModel,
+               contentModel.isDetailsVisible {
+                return [ItemIdentifier(
+                    id: contentModel.id,
+                    sectionId: section.id,
+                    type: .single(contentModel.id)
+                )]
+            }
+            return []
+        case .grid:
+            return section.items.map { item in
+                ItemIdentifier(
+                    id: item.id,
+                    sectionId: section.id,
+                    type: .single(item.id)
+                )
+            }
+        default:
+            // Other sections use item IDs directly
+            return section.items.map { item in
+                ItemIdentifier(
+                    id: item.id,
+                    sectionId: section.id,
+                    type: .single(item.id)
+                )
             }
         }
     }
@@ -2462,17 +2395,14 @@ extension ViewController {
         var snapshot = dataSource.snapshot()
         var sectionsToReload: [Section] = []
         
-        // Buscar todas las secciones que contienen este modelo
         for section in sectionDataManager.sections {
             var containsModel = false
             
-            switch section.content {
-            case .carousel(_, let items):
-                containsModel = items.contains { $0.id == model.id }
-            case .grid(_, let items):
-                containsModel = items.contains { $0.id == model.id }
-            case .list(_, let item):
-                containsModel = item.id == model.id
+            switch section.type {
+            case .carousel, .grid:
+                containsModel = section.items.contains { ($0 as? ContentModel)?.id == model.id }
+            case .list:
+                containsModel = (section.items.first as? ContentModel)?.id == model.id
             default:
                 break
             }
@@ -2482,71 +2412,38 @@ extension ViewController {
             }
         }
         
-        // Recargar las secciones afectadas
         if !sectionsToReload.isEmpty {
             snapshot.reloadSections(sectionsToReload)
             dataSource.apply(snapshot, animatingDifferences: false)
         }
     }
-
-    private func applySnapshot(animatingDifferences: Bool = true) {
-        var snapshot = Snapshot()
-        let sections = sectionDataManager.sections
-        snapshot.appendSections(sections)
+    
+    private func toggleListDetails(at sectionIndex: Int) {
+        let previouslyExpanded = expandedListSection
+        let isCollapsing = previouslyExpanded == sectionIndex
         
-        for section in sections {
-            let items: [SendableItem]
-            
-            switch section.content {
-            case .generalInfo(_, let models):
-                items = models.map { .info(model: $0) }
-                
-            case .carousel(_, let carouselItems):
-                items = carouselItems.isEmpty ? [] : [.carousel(items: carouselItems)]
-                
-            case .grid(_, let gridItems):
-                // Crear un item por cada elemento del grid para el DataSource
-                items = gridItems.isEmpty ? [] : gridItems.map { .grid(item: $0) }
-                
-            case .list(_, let item):
-                items = item.isDetailsVisible ? [.list(item: item)] : []
-                
-            case .footer(_, let models):
-                items = models.isEmpty ? [] : [.footer(models: models)]
+        if let oldIndex = previouslyExpanded, !isCollapsing {
+            if let oldSection = sectionDataManager.getSection(at: oldIndex),
+               var oldModel = oldSection.items.first as? ContentModel {
+                oldModel.isDetailsVisible = false
+                sectionDataManager.updateContentModel(oldModel)
             }
-            
-            snapshot.appendItems(items, toSection: section)
         }
         
-        dataSource.apply(snapshot, animatingDifferences: animatingDifferences)
-    }
-}
-
-
-// MARK: - UICollectionViewDelegate
-extension ViewController: UICollectionViewDelegate {
-    
-    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        collectionView.deselectItem(at: indexPath, animated: true)
-        
-        guard let item = dataSource.itemIdentifier(for: indexPath) else { return }
-        
-        switch item {
-        case .grid(let item):
-            if !item.isShoppingPlaceholder {
-                var updatedModel = item
-                updatedModel.isSelected.toggle()
-                sectionDataManager.updateContentModel(updatedModel)
-                reloadSectionsContainingModel(updatedModel)
-            }
-        default:
-            break
+        if let currentSection = sectionDataManager.getSection(at: sectionIndex),
+           var currentModel = currentSection.items.first as? ContentModel {
+            currentModel.isDetailsVisible.toggle()
+            sectionDataManager.updateContentModel(currentModel)
         }
+        
+        expandedListSection = isCollapsing ? nil : sectionIndex
+        applySnapshot()
     }
     
+    // MARK: - Layout Creation
     func createLayout() -> UICollectionViewCompositionalLayout {
         let layout = StickyCarouselHeaderLayout { [weak self] sectionIndex, layoutEnvironment in
-            guard let self, let section = self.sectionDataManager[section: sectionIndex] else {
+            guard let self, let section = self.sectionDataManager.getSection(at: sectionIndex) else {
                 let itemSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .fractionalHeight(1.0))
                 let item = NSCollectionLayoutItem(layoutSize: itemSize)
                 let groupSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .absolute(1))
@@ -2554,8 +2451,8 @@ extension ViewController: UICollectionViewDelegate {
                 return NSCollectionLayoutSection(group: group)
             }
             
-            switch section.content {
-            case .generalInfo:
+            switch section.type {
+            case .info:
                 return self.createInfoSection()
             case .carousel:
                 return self.createCarouselSection(for: sectionIndex, layoutEnvironment: layoutEnvironment)
@@ -2567,10 +2464,8 @@ extension ViewController: UICollectionViewDelegate {
                 return self.createFooterSection(layoutEnvironment: layoutEnvironment)
             }
         }
-        if let carouselSectionIndex = sectionDataManager.sections.firstIndex(where: {
-            if case .carousel = $0.content { return true }
-            return false
-        }) {
+        
+        if let carouselSectionIndex = sectionDataManager.sections.firstIndex(where: { $0.type == .carousel }) {
             layout.stickyHeaderSection = carouselSectionIndex
         }
         return layout
@@ -2582,10 +2477,10 @@ extension ViewController: UICollectionViewDelegate {
         let group = NSCollectionLayoutGroup.vertical(layoutSize: itemSize, subitems: [item])
         let section = NSCollectionLayoutSection(group: group)
         section.interGroupSpacing = cellSpacing
-        section.contentInsets = NSDirectionalEdgeInsets(top: cellSpacing, leading: self.horizontalPadding, bottom: cellSpacing, trailing: self.horizontalPadding)
+        section.contentInsets = NSDirectionalEdgeInsets(top: cellSpacing, leading: horizontalPadding, bottom: cellSpacing, trailing: horizontalPadding)
         return section
     }
-
+    
     private func createCarouselSection(for sectionIndex: Int, layoutEnvironment: NSCollectionLayoutEnvironment) -> NSCollectionLayoutSection {
         if shouldRecalculateCarouselHeight || cachedCarouselCellHeight == nil {
             cachedCarouselCellHeight = calculateCarouselHeight(in: sectionIndex)
@@ -2605,7 +2500,7 @@ extension ViewController: UICollectionViewDelegate {
         section.contentInsetsReference = .none
         
         let isLandscape = layoutEnvironment.traitCollection.verticalSizeClass == .compact
-        let horizontalInset: CGFloat = isLandscape ? 0 : self.horizontalPadding
+        let horizontalInset: CGFloat = isLandscape ? 0 : horizontalPadding
         
         section.contentInsets = NSDirectionalEdgeInsets(
             top: cellSpacing,
@@ -2613,13 +2508,13 @@ extension ViewController: UICollectionViewDelegate {
             bottom: cellSpacing,
             trailing: horizontalInset
         )
-
-        if let headerModel = sectionDataManager[headerFor: sectionIndex], case .tabBar = headerModel {
+        
+        if let headerModel = sectionDataManager.getHeader(for: sectionIndex), case .tabBar = headerModel {
             section.boundarySupplementaryItems = [createTabBarHeader()]
         }
         return section
     }
-
+    
     private func createGridSection(for sectionIndex: Int, layoutEnvironment: NSCollectionLayoutEnvironment) -> NSCollectionLayoutSection {
         let hasValueCell = sectionDataManager.shouldUseValueCell(at: IndexPath(item: 0, section: sectionIndex))
         let hasShoppingCell = sectionDataManager.isShoppingEnabled && sectionDataManager.numberOfItems(in: sectionIndex) > 20
@@ -2628,22 +2523,10 @@ extension ViewController: UICollectionViewDelegate {
             createMixedGridLayoutSection(for: sectionIndex, layoutEnvironment: layoutEnvironment) :
             createUniformGridSection(for: sectionIndex, layoutEnvironment: layoutEnvironment)
         
-        if sectionDataManager[headerFor: sectionIndex] != nil {
+        if sectionDataManager.getHeader(for: sectionIndex) != nil {
             section.boundarySupplementaryItems = [createHeader(estimatedHeight: 44)]
         }
         return section
-    }
-    
-    private func createHeader(estimatedHeight: CGFloat) -> NSCollectionLayoutBoundarySupplementaryItem {
-        let headerSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .estimated(estimatedHeight))
-        return NSCollectionLayoutBoundarySupplementaryItem(layoutSize: headerSize, elementKind: UICollectionView.elementKindSectionHeader, alignment: .top)
-    }
-
-    private func createTabBarHeader() -> NSCollectionLayoutBoundarySupplementaryItem {
-        let headerSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .estimated(50))
-        let sectionHeader = NSCollectionLayoutBoundarySupplementaryItem(layoutSize: headerSize, elementKind: UICollectionView.elementKindSectionHeader, alignment: .top)
-        sectionHeader.pinToVisibleBounds = true
-        return sectionHeader
     }
     
     private func createMixedGridLayoutSection(for sectionIndex: Int, layoutEnvironment: NSCollectionLayoutEnvironment) -> NSCollectionLayoutSection {
@@ -2652,7 +2535,7 @@ extension ViewController: UICollectionViewDelegate {
         let isIPad = traitCollection.userInterfaceIdiom == .pad
         let itemCount = sectionDataManager.numberOfItems(in: sectionIndex)
         let hasValueCell = sectionDataManager.isValueEnabled
-
+        
         let columnCount = (isIPad || !isPortrait) ? 3 : 2
         
         sectionDataManager.updateShoppingCellIndex(columnCount: columnCount)
@@ -2660,13 +2543,13 @@ extension ViewController: UICollectionViewDelegate {
         let dynamicShoppingCellIndex = sectionDataManager.currentShoppingCellIndex
         
         let cellWidth: CGFloat
-        let availableWidth = layoutEnvironment.container.effectiveContentSize.width - (self.horizontalPadding * 2)
+        let availableWidth = layoutEnvironment.container.effectiveContentSize.width - (horizontalPadding * 2)
         if columnCount > 1 {
             cellWidth = (availableWidth - (CGFloat(columnCount - 1) * cellSpacing)) / CGFloat(columnCount)
         } else {
             cellWidth = availableWidth
         }
-
+        
         if shouldRecalculateGridHeight || cachedGridCellHeight == nil {
             cachedGridCellHeight = calculateMaxGridCellHeight(for: cellWidth, in: sectionIndex)
             shouldRecalculateGridHeight = false
@@ -2679,11 +2562,11 @@ extension ViewController: UICollectionViewDelegate {
         while currentIndex < itemCount {
             let isValueItem = hasValueCell && currentIndex == 0
             let isShoppingItem = dynamicShoppingCellIndex != nil && currentIndex == dynamicShoppingCellIndex
-
+            
             if isValueItem {
                 let rowSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .absolute(finalHeight))
                 
-                if self.sectionDataManager.experience == .list {
+                if sectionDataManager.experience == .list {
                     let fullWidthItem = NSCollectionLayoutItem(layoutSize: rowSize)
                     let group = NSCollectionLayoutGroup.horizontal(layoutSize: rowSize, subitems: [fullWidthItem])
                     layoutGroups.append(group)
@@ -2745,12 +2628,13 @@ extension ViewController: UICollectionViewDelegate {
                     itemsInThisRow = min(columnCount, itemsLeft)
                 }
                 guard itemsInThisRow > 0 else { break }
+                
                 let itemSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0 / CGFloat(columnCount)), heightDimension: .fractionalHeight(1.0))
                 let item = NSCollectionLayoutItem(layoutSize: itemSize)
                 let groupSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .absolute(finalHeight))
                 let group = NSCollectionLayoutGroup.horizontal(layoutSize: groupSize, repeatingSubitem: item, count: itemsInThisRow)
                 if itemsInThisRow > 1 {
-                        group.interItemSpacing = .fixed(cellSpacing)
+                    group.interItemSpacing = .fixed(cellSpacing)
                 }
                 layoutGroups.append(group)
                 currentIndex += itemsInThisRow
@@ -2762,7 +2646,7 @@ extension ViewController: UICollectionViewDelegate {
         containerGroup.interItemSpacing = .fixed(cellSpacing)
         
         let section = NSCollectionLayoutSection(group: containerGroup)
-        section.contentInsets = NSDirectionalEdgeInsets(top: cellSpacing, leading: self.horizontalPadding, bottom: cellSpacing, trailing: self.horizontalPadding)
+        section.contentInsets = NSDirectionalEdgeInsets(top: cellSpacing, leading: horizontalPadding, bottom: cellSpacing, trailing: horizontalPadding)
         
         return section
     }
@@ -2773,7 +2657,7 @@ extension ViewController: UICollectionViewDelegate {
         let isIPad = traitCollection.userInterfaceIdiom == .pad
         
         let columnCount = isIPad ? 3 : (isPortrait ? 2 : 3)
-        let availableWidth = containerWidth - (self.horizontalPadding * 2)
+        let availableWidth = containerWidth - (horizontalPadding * 2)
         
         guard availableWidth > 0 else {
             let emptySize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .absolute(1))
@@ -2799,10 +2683,10 @@ extension ViewController: UICollectionViewDelegate {
         
         let section = NSCollectionLayoutSection(group: group)
         section.interGroupSpacing = cellSpacing
-        section.contentInsets = NSDirectionalEdgeInsets(top: cellSpacing, leading: self.horizontalPadding, bottom: cellSpacing, trailing: self.horizontalPadding)
+        section.contentInsets = NSDirectionalEdgeInsets(top: cellSpacing, leading: horizontalPadding, bottom: cellSpacing, trailing: horizontalPadding)
         return section
     }
-
+    
     func createListSection(for sectionIndex: Int, layoutEnvironment: NSCollectionLayoutEnvironment) -> NSCollectionLayoutSection {
         let headerSize = NSCollectionLayoutSize(
             widthDimension: .fractionalWidth(1.0),
@@ -2829,7 +2713,7 @@ extension ViewController: UICollectionViewDelegate {
         
         let sectionLayout = NSCollectionLayoutSection(group: group)
         sectionLayout.boundarySupplementaryItems = [header]
-        sectionLayout.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: self.horizontalPadding, bottom: 8, trailing: self.horizontalPadding)
+        sectionLayout.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: horizontalPadding, bottom: 8, trailing: horizontalPadding)
         
         return sectionLayout
     }
@@ -2866,19 +2750,36 @@ extension ViewController: UICollectionViewDelegate {
         return section
     }
     
+    private func createHeader(estimatedHeight: CGFloat) -> NSCollectionLayoutBoundarySupplementaryItem {
+        let headerSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .estimated(estimatedHeight))
+        return NSCollectionLayoutBoundarySupplementaryItem(layoutSize: headerSize, elementKind: UICollectionView.elementKindSectionHeader, alignment: .top)
+    }
+    
+    private func createTabBarHeader() -> NSCollectionLayoutBoundarySupplementaryItem {
+        let headerSize = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1.0), heightDimension: .estimated(50))
+        let sectionHeader = NSCollectionLayoutBoundarySupplementaryItem(layoutSize: headerSize, elementKind: UICollectionView.elementKindSectionHeader, alignment: .top)
+        sectionHeader.pinToVisibleBounds = false
+        return sectionHeader
+    }
+    
+    // MARK: - Height Calculations
     private func calculateCarouselHeight(in sectionIndex: Int) -> CGFloat {
-        guard let section = sectionDataManager[section: sectionIndex],
-              case .carousel(_, let items) = section.content, !items.isEmpty else {
+        guard let section = sectionDataManager.getSection(at: sectionIndex),
+              section.type == .carousel,
+              !section.items.isEmpty else {
             return 220.0
         }
+        
+        let items = section.items.compactMap { $0 as? ContentModel }
         let sizingCell = CarouselCell(frame: .zero)
         sizingCell.configure(with: items)
         return sizingCell.calculateHeight(forWidth: 132.0)
     }
     
     private func calculateMaxGridCellHeight(for cellWidth: CGFloat, in sectionIndex: Int) -> CGFloat {
-        guard let section = sectionDataManager[section: sectionIndex],
-              case .grid(_, let items) = section.content, !items.isEmpty else {
+        guard let section = sectionDataManager.getSection(at: sectionIndex),
+              section.type == .grid,
+              !section.items.isEmpty else {
             return 192.0
         }
         
@@ -2887,18 +2788,20 @@ extension ViewController: UICollectionViewDelegate {
         let shoppingSizingCell = ShoppingCell(frame: .zero)
         let standardSizingCell = TitleSubtitleCell(frame: .zero)
         
-        for (index, item) in items.enumerated() {
+        for (index, item) in section.items.enumerated() {
+            guard let contentItem = item as? ContentModel else { continue }
+            
             let sizingView: UIView
             let indexPath = IndexPath(item: index, section: sectionIndex)
             
             if sectionDataManager.shouldUseShoppingCell(at: indexPath) {
-                shoppingSizingCell.configure(with: item)
+                shoppingSizingCell.configure(with: contentItem)
                 sizingView = shoppingSizingCell
             } else if sectionDataManager.shouldUseValueCell(at: indexPath) {
-                valueSizingCell.configure(with: item)
+                valueSizingCell.configure(with: contentItem)
                 sizingView = valueSizingCell
             } else {
-                standardSizingCell.configure(with: item)
+                standardSizingCell.configure(with: contentItem)
                 sizingView = standardSizingCell
             }
             
@@ -2915,11 +2818,29 @@ extension ViewController: UICollectionViewDelegate {
     }
 }
 
+// MARK: - UICollectionViewDelegate
+extension ViewController: UICollectionViewDelegate {
+    
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        collectionView.deselectItem(at: indexPath, animated: true)
+        
+        guard let section = sectionDataManager.getSection(at: indexPath.section),
+              section.type == .grid,
+              let item = section.items[safe: indexPath.item] as? ContentModel,
+              !item.isShoppingPlaceholder else { return }
+        
+        var updatedModel = item
+        updatedModel.isSelected.toggle()
+        sectionDataManager.updateContentModel(updatedModel)
+        reloadSectionsContainingModel(updatedModel)
+    }
+}
 
 // MARK: - TabBarViewDelegate
 extension ViewController: TabBarViewDelegate {
     func tabBarView(didSelectTabAt index: Int) {
-        let isPortrait = traitCollection.verticalSizeClass == .regular && traitCollection.horizontalSizeClass == .compact
+        let isPortrait = traitCollection.verticalSizeClass == .regular &&
+                        traitCollection.horizontalSizeClass == .compact
         let isIPad = traitCollection.userInterfaceIdiom == .pad
         let columnCount = (isIPad || !isPortrait) ? 3 : 2
         
