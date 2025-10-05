@@ -1,6 +1,6 @@
 import UIKit
 
-// MARK: - Models (Simplificados)
+// MARK: - Models with Separated Protocols
 // =================================================================================
 
 enum ExperienceType {
@@ -19,13 +19,18 @@ enum SectionHeader: Hashable, Sendable {
     case list(ContentModel)
 }
 
-// MARK: - Content Items Protocol
-protocol ContentItem: Hashable, Sendable {
+// MARK: - Base Protocol (No ID required)
+protocol SectionItem: Hashable, Sendable {
+    // No requiere ID - cada tipo decide cómo identificarse
+}
+
+// MARK: - Protocol for items needing tracking
+protocol IdentifiableItem: SectionItem {
     var id: UUID { get }
 }
 
-struct InfoModel: ContentItem {
-    let id = UUID()
+// MARK: - Simple Models (identified by content)
+struct InfoModel: SectionItem {
     let title: String
     let subtitle: String?
     
@@ -35,8 +40,7 @@ struct InfoModel: ContentItem {
     }
 }
 
-struct FooterModel: ContentItem {
-    let id = UUID()
+struct FooterModel: SectionItem {
     let title: String
     let subtitle: String?
     
@@ -46,7 +50,8 @@ struct FooterModel: ContentItem {
     }
 }
 
-struct ContentModel: ContentItem {
+// MARK: - Complex Model (with ID for tracking)
+struct ContentModel: IdentifiableItem {
     let id = UUID()
     let logo: UIImage?
     let tag: String?
@@ -90,7 +95,7 @@ struct ContentModel: ContentItem {
     }
 }
 
-// MARK: - Simplified Section Model
+// MARK: - Section Model
 enum SectionType: Hashable, Sendable {
     case info
     case carousel
@@ -103,7 +108,7 @@ struct Section: Hashable, Sendable {
     let id = UUID()
     let type: SectionType
     var header: SectionHeader?
-    var items: [any ContentItem]
+    var items: [any SectionItem]  // Now uses SectionItem base protocol
     
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
@@ -111,6 +116,18 @@ struct Section: Hashable, Sendable {
     
     static func == (lhs: Section, rhs: Section) -> Bool {
         return lhs.id == rhs.id
+    }
+}
+
+// MARK: - ItemIdentifier (keeping original structure)
+struct ItemIdentifier: Hashable, Sendable {
+    let id: UUID
+    let sectionId: UUID
+    let type: ItemType
+    
+    enum ItemType: Hashable, Sendable {
+        case single(UUID)  // For regular items
+        case carousel     // For carousel container
     }
 }
 
@@ -157,7 +174,7 @@ class SectionDataManager {
         }
     }
     
-    // MARK: - Public Methods (Replace complex subscripts)
+    // MARK: - Public Methods
     
     func getSection(at index: Int) -> Section? {
         guard let tab = currentTab,
@@ -178,12 +195,11 @@ class SectionDataManager {
         sectionsByTab[tab] = sections
     }
     
-    func getItem(at indexPath: IndexPath) -> (any ContentItem)? {
+    func getItem(at indexPath: IndexPath) -> (any SectionItem)? {
         guard let section = getSection(at: indexPath.section) else { return nil }
         
         switch section.type {
         case .carousel:
-            // For carousel, return all items as it's a horizontal collection
             return section.items.first
         default:
             return section.items[safe: indexPath.item]
@@ -197,18 +213,16 @@ class SectionDataManager {
         section.items = items
         updateSection(section, at: sectionIndex)
         
-        // Sync each model if needed
         for model in items {
             updateContentModel(model)
         }
     }
     
-    func updateItem(_ item: any ContentItem, at indexPath: IndexPath) {
+    func updateItem(_ item: any SectionItem, at indexPath: IndexPath) {
         guard var section = getSection(at: indexPath.section) else { return }
         
         switch section.type {
         case .carousel:
-            // Para carousel, actualiza el item específico dentro del array
             if let contentModel = item as? ContentModel,
                indexPath.item < section.items.count {
                 section.items[indexPath.item] = contentModel
@@ -222,6 +236,7 @@ class SectionDataManager {
         
         updateSection(section, at: indexPath.section)
         
+        // Only update ContentModel globally (those with ID)
         if let contentModel = item as? ContentModel {
             updateContentModel(contentModel)
         }
@@ -230,7 +245,6 @@ class SectionDataManager {
     func getHeader(for sectionIndex: Int) -> SectionHeader? {
         guard let section = getSection(at: sectionIndex) else { return nil }
         
-        // Update tab bar header with current selection if needed
         if case .tabBar(let tabs, _) = section.header {
             return .tabBar(tabs: tabs, selectedIndex: selectedTabIndex)
         }
@@ -253,9 +267,8 @@ class SectionDataManager {
         
         switch section.type {
         case .carousel:
-            return section.items.isEmpty ? 0 : 1  // Carousel is one item
+            return section.items.isEmpty ? 0 : 1
         case .list:
-            // Check if list item is visible
             if let contentModel = section.items.first as? ContentModel {
                 return contentModel.isDetailsVisible ? 1 : 0
             }
@@ -307,6 +320,7 @@ class SectionDataManager {
         return false
     }
     
+    // This method only works with ContentModel (items that have ID)
     func updateContentModel(_ updatedModel: ContentModel) {
         guard !updatedModel.isShoppingPlaceholder else { return }
         
@@ -320,7 +334,6 @@ class SectionDataManager {
                 var updatedSection = section
                 var itemsWereUpdated = false
                 
-                // Update items if they match the updated model
                 updatedSection.items = section.items.map { item in
                     if let contentItem = item as? ContentModel,
                        contentItem.id == updatedModel.id {
@@ -330,7 +343,6 @@ class SectionDataManager {
                     return item
                 }
                 
-                // Update header if it contains the model
                 if case .list(let headerModel) = section.header,
                    headerModel.id == updatedModel.id {
                     updatedSection.header = .list(updatedModel)
@@ -367,7 +379,6 @@ class SectionDataManager {
         sectionsByTab[tab] = createSections(for: tab)
     }
     
-    // MARK: - Public method for updateShoppingCellIndex
     public func updateShoppingCellIndex(columnCount: Int) {
         currentShoppingCellIndex = nil
         
@@ -428,11 +439,9 @@ class SectionDataManager {
         guard let tab = currentTab,
               var sections = sectionsByTab[tab] else { return }
         
-        // Find grid section
         guard let gridSectionIndex = sections.firstIndex(where: { $0.type == .grid }),
               var gridSection = sections[safe: gridSectionIndex] else { return }
         
-        // Remove existing placeholder
         if let placeholderId = shoppingPlaceholderId {
             gridSection.items.removeAll {
                 ($0 as? ContentModel)?.id == placeholderId
@@ -440,7 +449,6 @@ class SectionDataManager {
             shoppingPlaceholderId = nil
         }
         
-        // Add new placeholder if needed
         if isShoppingEnabled,
            let shoppingIndex = currentShoppingCellIndex,
            shoppingIndex <= gridSection.items.count {
@@ -477,7 +485,6 @@ class SectionDataManager {
         
         switch experience {
         case .list:
-            // Add list sections
             let firstListItem = ContentModel.gridItem(index: 0, prefix: prefix, isValue: isValueEnabled)
             sections.append(createListSection(item: firstListItem))
             
@@ -500,7 +507,8 @@ class SectionDataManager {
     }
     
     private func createGeneralInfoSection(prefix: String) -> Section {
-        let items: [any ContentItem] = [
+        // InfoModel doesn't need ID - identified by content
+        let items: [any SectionItem] = [
             InfoModel(title: "\(prefix) Info Item 1", subtitle: "General info subtitle"),
             InfoModel(title: "\(prefix) Info Item 2", subtitle: "Another subtitle")
         ]
@@ -508,20 +516,19 @@ class SectionDataManager {
     }
     
     private func createCarouselSection(prefix: String, sharedItems: [ContentModel]) -> Section {
-        var items: [any ContentItem] = sharedItems
+        var items: [any SectionItem] = sharedItems
         
         let regularItems = (0..<12).map { i in
             ContentModel.carouselItem(index: i, prefix: prefix, isHighlighted: i % 4 == 0)
         }
         items.append(contentsOf: regularItems)
         
-        // FIX: Use actual tabData instead of empty array
         let header = SectionHeader.tabBar(tabs: self.tabData, selectedIndex: self.selectedTabIndex)
         return Section(type: .carousel, header: header, items: items)
     }
     
     private func createGridSection(prefix: String, itemCount: Int, sharedItems: [ContentModel]) -> Section {
-        var items: [any ContentItem] = []
+        var items: [any SectionItem] = []
         
         let firstItem = ContentModel.gridItem(index: 0, prefix: prefix, isValue: isValueEnabled)
         items.append(firstItem)
@@ -543,13 +550,13 @@ class SectionDataManager {
     }
     
     private func createFooterSection(prefix: String) -> Section {
-        let items: [any ContentItem] = [
+        // FooterModel doesn't need ID either
+        let items: [any SectionItem] = [
             FooterModel(title: "\(prefix) Footer", subtitle: "Additional footer details")
         ]
         return Section(type: .footer, header: .title("Test"), items: items)
     }
     
-    // MARK: - Debug Helper
     func debugPrintSections() {
         print("=== Debug: Current Sections ===")
         for (index, section) in sections.enumerated() {
@@ -2054,17 +2061,6 @@ final class ListDetailCell: UICollectionViewCell {
     }
 }
 
-struct ItemIdentifier: Hashable, Sendable {
-    let id: UUID
-    let sectionId: UUID
-    let type: ItemType
-    
-    enum ItemType: Hashable, Sendable {
-        case single(UUID)  // For regular items
-        case carousel     // For carousel container
-    }
-}
-
 import UIKit
 
 // MARK: - ViewController con nueva estructura
@@ -2348,46 +2344,35 @@ final class ViewController: UIViewController {
     
     private func createItemIdentifiers(for section: Section) -> [ItemIdentifier] {
         switch section.type {
+        case .info, .footer:
+            // Para items sin ID, generar uno temporal
+            return section.items.map { item in
+                let itemId = (item as? (any IdentifiableItem))?.id ?? UUID()
+                return ItemIdentifier(
+                    id: itemId,
+                    sectionId: section.id,
+                    type: .single(itemId)
+                )
+            }
+        case .grid, .list:
+            // Para ContentModel, usar su ID real
+            return section.items.map { item in
+                let itemId = (item as? (any IdentifiableItem))?.id ?? UUID()
+                return ItemIdentifier(
+                    id: itemId,
+                    sectionId: section.id,
+                    type: .single(itemId)
+                )
+            }
         case .carousel:
-            // Carousel is treated as a single item container
-            if section.items.isEmpty {
-                return []
-            } else {
-                return [ItemIdentifier(
+            // Mantener como estaba
+            return section.items.isEmpty ? [] : [
+                ItemIdentifier(
                     id: UUID(),
                     sectionId: section.id,
                     type: .carousel
-                )]
-            }
-            
-        case .list:
-            // List only shows items when details are visible
-            if let contentModel = section.items.first as? ContentModel,
-               contentModel.isDetailsVisible {
-                return [ItemIdentifier(
-                    id: contentModel.id,
-                    sectionId: section.id,
-                    type: .single(contentModel.id)
-                )]
-            }
-            return []
-        case .grid:
-            return section.items.map { item in
-                ItemIdentifier(
-                    id: item.id,
-                    sectionId: section.id,
-                    type: .single(item.id)
                 )
-            }
-        default:
-            // Other sections use item IDs directly
-            return section.items.map { item in
-                ItemIdentifier(
-                    id: item.id,
-                    sectionId: section.id,
-                    type: .single(item.id)
-                )
-            }
+            ]
         }
     }
     
