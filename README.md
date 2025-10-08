@@ -1,10 +1,3 @@
-//
-//  ViewController.swift
-//  test
-//
-//  Created by Juan Pablo Granados Garcia on 4/8/25.
-//
-
 import UIKit
 import Foundation
 
@@ -293,7 +286,21 @@ class AsyncImageView: UIImageView {
     private let imageLoader: ImageLoading
     private var currentLoadTask: Task<Void, Error>?
     private var expectedURL: URL?
+    
+    // MARK: - Callbacks
+    
+    /// Callback que se ejecuta cuando una imagen se carga exitosamente
+    /// El contenedor puede usar esto para actualizar su layout si es necesario
+    var onImageLoaded: (() -> Void)?
+    
+    /// Callback que se ejecuta cuando falla la carga de una imagen
+    var onImageLoadFailed: ((Error) -> Void)?
+    
+    /// Callback que se ejecuta cuando se cancela la carga
+    var onImageLoadCancelled: (() -> Void)?
 
+    // MARK: - LoadResult (mantenido del original)
+    
     enum LoadResult: Equatable {
         case success(url: URL, image: UIImage)
         case failure(url: URL?, error: Error)
@@ -316,6 +323,8 @@ class AsyncImageView: UIImageView {
         }
     }
 
+    // MARK: - Initialization
+    
     init(frame: CGRect = .zero, imageLoader: ImageLoading = ImageLoader.shared) {
         self.imageLoader = imageLoader
         super.init(frame: frame)
@@ -332,6 +341,8 @@ class AsyncImageView: UIImageView {
         clipsToBounds = true
     }
 
+    // MARK: - Public Methods
+    
     func loadImage(
         url: URL?,
         type: ImageType,
@@ -418,22 +429,29 @@ class AsyncImageView: UIImageView {
                 case .success(let data):
                     if let img = self.applyImageAndReturn(data, transition: transition, url: targetURL) {
                         completion?(LoadResult.success(url: targetURL, image: img))
+                        // Notificar al contenedor que la imagen se cargó
+                        self.onImageLoaded?()
                     } else {
-                        completion?(LoadResult.failure(url: targetURL, error: ImageLoadingError.decompressionFailed))
+                        let error = ImageLoadingError.decompressionFailed
+                        completion?(LoadResult.failure(url: targetURL, error: error))
+                        self.onImageLoadFailed?(error)
                     }
                 case .failure(let error):
                     if error is CancellationError || (error as? ImageLoadingError) == .cancelled {
                         completion?(LoadResult.cancelled(url: targetURL))
+                        self.onImageLoadCancelled?()
                     } else {
                         self.applyErrorState(url: targetURL)
                         completion?(LoadResult.failure(url: targetURL, error: error))
+                        self.onImageLoadFailed?(error)
                     }
                 }
             }
         }
     }
 
-    // ✅ SOLUCIÓN: Método mejorado con actualización forzada del layout
+    // MARK: - Private Methods
+    
     @discardableResult
     private func applyImageAndReturn(_ data: Data, transition: Bool, url: URL) -> UIImage? {
         guard self.expectedURL == url else { return nil }
@@ -442,30 +460,7 @@ class AsyncImageView: UIImageView {
             return nil
         }
         
-        // Closure para forzar actualización del layout
-        let forceLayoutUpdate = { [weak self] in
-            guard let self = self else { return }
-            
-            // Actualizar la vista actual
-            self.setNeedsLayout()
-            self.layoutIfNeeded()
-            self.setNeedsDisplay()
-            
-            // Actualizar la supervista (contentView de la celda)
-            self.superview?.setNeedsLayout()
-            self.superview?.layoutIfNeeded()
-            
-            // Si está en una celda, actualizar la celda completa
-            if let cell = self.findContainingCell() {
-                cell.setNeedsLayout()
-                cell.layoutIfNeeded()
-                cell.contentView.setNeedsLayout()
-                cell.contentView.layoutIfNeeded()
-            }
-        }
-        
         if transition && self.image == nil {
-            // Con transición: actualizar después de la animación
             UIView.transition(
                 with: self,
                 duration: 0.25,
@@ -474,31 +469,15 @@ class AsyncImageView: UIImageView {
                     self.image = loadedImage
                 },
                 completion: { _ in
-                    forceLayoutUpdate()
+                    // El contenedor decidirá si necesita actualizar el layout
+                    // mediante el callback onImageLoaded
                 }
             )
         } else {
-            // Sin transición: actualizar inmediatamente
             self.image = loadedImage
-            // Usar async para asegurar que el cambio se procese
-            DispatchQueue.main.async {
-                forceLayoutUpdate()
-            }
         }
         
         return loadedImage
-    }
-    
-    // Helper para encontrar la celda contenedora
-    private func findContainingCell() -> UICollectionViewCell? {
-        var view: UIView? = self.superview
-        while view != nil {
-            if let cell = view as? UICollectionViewCell {
-                return cell
-            }
-            view = view?.superview
-        }
-        return nil
     }
     
     private func applyErrorState(url: URL) {
@@ -521,6 +500,7 @@ class AsyncImageView: UIImageView {
             if let url = urlToCancel {
                 Task { await imageLoader.cancelLoad(for: url) }
             }
+            onImageLoadCancelled?()
         }
     }
     
@@ -532,6 +512,11 @@ class AsyncImageView: UIImageView {
             layer.removeAllAnimations()
         }
         self.expectedURL = nil
+        
+        // Limpiar callbacks para evitar retain cycles
+        onImageLoaded = nil
+        onImageLoadFailed = nil
+        onImageLoadCancelled = nil
     }
     
     private var logID: String {
@@ -547,7 +532,7 @@ class BaseOfferCollectionViewCell: UICollectionViewCell {
     let logoForegroundView = AsyncImageView()
     private var configurationID: String?
     
-    // ✅ Flags para rastrear cargas pendientes
+    // Flags para rastrear cargas pendientes
     private var pendingHeroLoad = false
     private var pendingLogoLoad = false
 
@@ -555,12 +540,14 @@ class BaseOfferCollectionViewCell: UICollectionViewCell {
         super.init(frame: frame)
         commonInit()
         setupUI()
+        setupImageViewCallbacks()
     }
     
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         commonInit()
         setupUI()
+        setupImageViewCallbacks()
     }
 
     private func commonInit() {
@@ -588,54 +575,44 @@ class BaseOfferCollectionViewCell: UICollectionViewCell {
             logoForegroundView.heightAnchor.constraint(lessThanOrEqualTo: contentView.heightAnchor, multiplier: 0.4),
         ])
     }
-
-    // ✅ SOLUCIÓN: Configuración mejorada con callbacks y actualización de layout
-    final func configure(with offer: Offer) {
-        let heroUrlString = offer.getHeroImageURL()
-        guard let logoUrlString = offer.getLogoImageURL(),
-              let logoUrl = URL(string: logoUrlString) else {
-            heroBackgroundView.loadImage(url: nil, type: .hero)
-            logoForegroundView.loadImage(url: nil, type: .logo)
-            configurationID = "INVALID_LOGO"
-            return
+    
+    // NUEVO: Configurar callbacks para los image views
+    private func setupImageViewCallbacks() {
+        // Callback cuando el hero background se carga
+        heroBackgroundView.onImageLoaded = { [weak self] in
+            self?.handleImageLoaded(isHero: true)
         }
         
-        let heroUrl = heroUrlString.flatMap { URL(string: $0) }
-        configurationID = "\(heroUrlString ?? "nil")|\(logoUrlString)"
-        
-        // Marcar cargas pendientes
-        pendingHeroLoad = true
-        pendingLogoLoad = true
-        
-        // Cargar imagen hero con callback
-        heroBackgroundView.loadImage(
-            url: heroUrl,
-            type: .hero,
-            fallbackURL: logoUrl
-        ) { [weak self] result in
-            guard let self = self else { return }
-            self.pendingHeroLoad = false
-            
-            if case .success = result {
-                self.updateLayoutAfterImageLoad()
-            }
+        // Callback cuando el logo se carga
+        logoForegroundView.onImageLoaded = { [weak self] in
+            self?.handleImageLoaded(isHero: false)
         }
         
-        // Cargar imagen logo con callback
-        logoForegroundView.loadImage(
-            url: logoUrl,
-            type: .logo
-        ) { [weak self] result in
-            guard let self = self else { return }
-            self.pendingLogoLoad = false
-            
-            if case .success = result {
-                self.updateLayoutAfterImageLoad()
-            }
+        // Opcional: manejar errores
+        heroBackgroundView.onImageLoadFailed = { [weak self] error in
+            print("Hero image failed to load: \(error)")
+            self?.pendingHeroLoad = false
+        }
+        
+        logoForegroundView.onImageLoadFailed = { [weak self] error in
+            print("Logo image failed to load: \(error)")
+            self?.pendingLogoLoad = false
         }
     }
     
-    // ✅ Método para forzar actualización del layout después de cargar imagen
+    // Método para manejar cuando una imagen se carga
+    private func handleImageLoaded(isHero: Bool) {
+        if isHero {
+            pendingHeroLoad = false
+        } else {
+            pendingLogoLoad = false
+        }
+        
+        // Actualizar layout de la celda
+        updateLayoutAfterImageLoad()
+    }
+    
+    // Método para forzar actualización del layout después de cargar imagen
     private func updateLayoutAfterImageLoad() {
         // Ejecutar en el siguiente ciclo del run loop para asegurar que todos los cambios se apliquen
         DispatchQueue.main.async { [weak self] in
@@ -673,6 +650,37 @@ class BaseOfferCollectionViewCell: UICollectionViewCell {
         }
     }
 
+    final func configure(with offer: Offer) {
+        let heroUrlString = offer.getHeroImageURL()
+        guard let logoUrlString = offer.getLogoImageURL(),
+              let logoUrl = URL(string: logoUrlString) else {
+            heroBackgroundView.loadImage(url: nil, type: .hero)
+            logoForegroundView.loadImage(url: nil, type: .logo)
+            configurationID = "INVALID_LOGO"
+            return
+        }
+        
+        let heroUrl = heroUrlString.flatMap { URL(string: $0) }
+        configurationID = "\(heroUrlString ?? "nil")|\(logoUrlString)"
+        
+        // Marcar cargas pendientes
+        pendingHeroLoad = true
+        pendingLogoLoad = true
+        
+        // Cargar imagen hero con fallback
+        heroBackgroundView.loadImage(
+            url: heroUrl,
+            type: .hero,
+            fallbackURL: logoUrl
+        )
+        
+        // Cargar imagen logo
+        logoForegroundView.loadImage(
+            url: logoUrl,
+            type: .logo
+        )
+    }
+    
     override func prepareForReuse() {
         super.prepareForReuse()
         heroBackgroundView.prepareForReuse()
@@ -682,7 +690,6 @@ class BaseOfferCollectionViewCell: UICollectionViewCell {
         pendingLogoLoad = false
     }
     
-    // Override para asegurar que el layout se actualice correctamente
     override func layoutSubviews() {
         super.layoutSubviews()
         // Asegurar que las subvistas estén correctamente posicionadas
