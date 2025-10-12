@@ -216,6 +216,10 @@ class SectionDataManager {
     private var listSectionPositions: [Int: ListItemPosition] = [:]
     private var shoppingPlaceholderId: String?
     
+    // Cache para mejorar rendimiento
+    private var sectionsCache: [TabItem: [Section]] = [:]
+    private var needsCacheInvalidation: Set<TabItem> = []
+    
     var isValueEnabled: Bool
     var isVideoEnabled: Bool
     var isShoppingEnabled: Bool
@@ -232,17 +236,28 @@ class SectionDataManager {
     }
     
     var sections: [Section] {
-        guard let tab = currentTab,
-              let refs = sectionsByTab[tab] else { return [] }
+        guard let tab = currentTab else { return [] }
         
-        return refs.map { ref in
+        // Si ya existe en cache y no necesita invalidación, retornar directamente
+        if let cached = sectionsCache[tab], !needsCacheInvalidation.contains(tab) {
+            return cached
+        }
+        
+        // Si no, construir esqueleto ligero de secciones
+        guard let refs = sectionsByTab[tab] else { return [] }
+        
+        let resolvedSections = refs.map { ref in
             Section(
                 id: ref.sectionId,
                 type: ref.type,
-                header: resolveHeader(ref.header),
-                items: resolveItems(for: ref.itemIds, type: ref.type)
+                header: ref.header, // Mantener header sin resolver para tipos simples
+                items: [] // Vacío inicialmente para lazy loading
             )
         }
+        
+        sectionsCache[tab] = resolvedSections
+        needsCacheInvalidation.remove(tab)
+        return resolvedSections
     }
     
     init(isValueEnabled: Bool = false,
@@ -300,19 +315,29 @@ class SectionDataManager {
     }
     
     func getSection(at index: Int) -> Section? {
-        guard let tab = currentTab,
-              let refs = sectionsByTab[tab],
-              refs.indices.contains(index) else {
-            return nil
+        let sections = self.sections // Usa la versión cacheada
+        guard sections.indices.contains(index) else { return nil }
+        
+        var section = sections[index]
+        
+        // Solo resolver items si están vacíos (lazy loading)
+        if section.items.isEmpty {
+            guard let tab = currentTab,
+                  let refs = sectionsByTab[tab],
+                  refs.indices.contains(index) else { return section }
+            
+            let ref = refs[index]
+            section.items = resolveItems(for: ref.itemIds, type: ref.type)
+            section.header = resolveHeader(ref.header)
+            
+            // Actualizar cache con la sección completa
+            if var cachedSections = sectionsCache[tab] {
+                cachedSections[index] = section
+                sectionsCache[tab] = cachedSections
+            }
         }
         
-        let ref = refs[index]
-        return Section(
-            id: ref.sectionId,
-            type: ref.type,
-            header: resolveHeader(ref.header),
-            items: resolveItems(for: ref.itemIds, type: ref.type)
-        )
+        return section
     }
     
     func updateSection(_ section: Section, at index: Int) {
@@ -346,6 +371,9 @@ class SectionDataManager {
             itemIds: itemIds
         )
         sectionsByTab[tab] = refs
+        
+        // Invalidar cache para este tab
+        needsCacheInvalidation.insert(tab)
     }
     
     func getItem(at indexPath: IndexPath) -> (any ContentItem)? {
@@ -398,21 +426,36 @@ class SectionDataManager {
         refs[sectionIndex].itemIds = itemIds
         sectionsByTab[tab] = refs
         
+        // Invalidar cache
+        needsCacheInvalidation.insert(tab)
+        
         onSectionsDidUpdate?()
     }
     
     func updateItem(_ item: any ContentItem, at indexPath: IndexPath) {
         if let contentModel = item as? ContentModel, let id = contentModel.id {
             contentStore[id] = contentModel
+            if let tab = currentTab {
+                needsCacheInvalidation.insert(tab)
+            }
             onSectionsDidUpdate?()
         } else if let infoModel = item as? InfoModel, let id = infoModel.id {
             infoStore[id] = infoModel
+            if let tab = currentTab {
+                needsCacheInvalidation.insert(tab)
+            }
             onSectionsDidUpdate?()
         } else if let footerModel = item as? FooterModel, let id = footerModel.id {
             footerStore[id] = footerModel
+            if let tab = currentTab {
+                needsCacheInvalidation.insert(tab)
+            }
             onSectionsDidUpdate?()
         } else if let disclaimerModel = item as? DisclaimerModel, let id = disclaimerModel.id {
             disclaimerStore[id] = disclaimerModel
+            if let tab = currentTab {
+                needsCacheInvalidation.insert(tab)
+            }
             onSectionsDidUpdate?()
         } else {
             guard var section = getSection(at: indexPath.section) else { return }
@@ -441,6 +484,9 @@ class SectionDataManager {
         
         refs[sectionIndex].header = header
         sectionsByTab[tab] = refs
+        
+        // Invalidar cache
+        needsCacheInvalidation.insert(tab)
     }
     
     func numberOfSections() -> Int {
@@ -465,6 +511,27 @@ class SectionDataManager {
     
     func setSelectedTabIndex(_ index: Int, columnCount: Int) {
         guard index != selectedTabIndex, tabData.indices.contains(index) else { return }
+        
+        // Limpiar cache del tab anterior si es muy grande para gestionar memoria
+        if let previousTab = currentTab,
+           let previousSections = sectionsCache[previousTab] {
+            let totalItems = previousSections.reduce(0) { total, section in
+                if section.items.isEmpty {
+                    // Si aún no se han resuelto, contar los IDs
+                    if let refs = sectionsByTab[previousTab],
+                       let ref = refs.first(where: { $0.sectionId == section.id }) {
+                        return total + ref.itemIds.count
+                    }
+                }
+                return total + section.items.count
+            }
+            
+            // Limpiar cache si hay muchos items
+            if totalItems > 100 {
+                sectionsCache.removeValue(forKey: previousTab)
+            }
+        }
+        
         selectedTabIndex = index
         
         // Limpiar el shopping placeholder antes de cambiar de tab
@@ -518,6 +585,12 @@ class SectionDataManager {
               let id = updatedModel.id else { return }
         
         contentStore[id] = updatedModel
+        
+        // Invalidar cache
+        if let tab = currentTab {
+            needsCacheInvalidation.insert(tab)
+        }
+        
         if notify {
             onSectionsDidUpdate?()
         }
@@ -555,6 +628,8 @@ class SectionDataManager {
         infoStore.removeAll()
         footerStore.removeAll()
         disclaimerStore.removeAll()
+        sectionsCache.removeAll()
+        needsCacheInvalidation.removeAll()
         setupInitialData()
         selectedTabIndex = 0
     }
@@ -564,6 +639,7 @@ class SectionDataManager {
               let tab = tabData[safe: index] else { return }
         
         sectionsByTab[tab] = createSectionsOptimized(for: tab)
+        needsCacheInvalidation.insert(tab)
     }
     
     public func updateShoppingCellIndex(columnCount: Int) {
@@ -575,7 +651,6 @@ class SectionDataManager {
             return
         }
         
-        // Obtiene los IDs de los items del carrusel para identificar los modelos compartidos.
         let carouselItemIdsSet: Set<String?>
         if let carouselRef = refs.first(where: { $0.type == .carousel }) {
             carouselItemIdsSet = Set(carouselRef.itemIds.compactMap { $0 })
@@ -583,7 +658,6 @@ class SectionDataManager {
             carouselItemIdsSet = []
         }
         
-        // Cuenta los modelos que existen tanto en la cuadrícula como en el carrusel (es decir, modelos "compartidos").
         var sharedModelCount = 0
         for id in gridRef.itemIds {
             guard let id = id else { continue }
@@ -614,7 +688,6 @@ class SectionDataManager {
             }
         }
         
-        // Ajusta el índice base según la cantidad de modelos compartidos.
         let adjustedBaseIndex = baseShoppingIndex + sharedModelCount
         
         var finalIndex: Int
@@ -670,6 +743,9 @@ class SectionDataManager {
         refs[gridIndex] = gridRef
         sectionsByTab[tab] = refs
         
+        // Invalidar cache
+        needsCacheInvalidation.insert(tab)
+        
         if shouldNotify {
             onSectionsDidUpdate?()
         }
@@ -682,6 +758,7 @@ class SectionDataManager {
         updateListSectionPositions()
     }
     
+    // Los métodos createSectionsOptimized y relacionados permanecen sin cambios...
     private func createSectionsOptimized(for tab: TabItem) -> [SectionReference] {
         let prefix = tab.title.replacingOccurrences(of: "Category", with: "Content")
         
@@ -712,7 +789,7 @@ class SectionDataManager {
                 refs.append(createListSectionOptimized(item: sharedModel))
             }
             
-            for i in 1..<300 {
+            for i in 1..<400 {
                 let listItem = ContentModel.gridItem(index: i, prefix: prefix, isValue: false)
                 if let id = listItem.id {
                     contentStore[id] = listItem
@@ -721,7 +798,7 @@ class SectionDataManager {
             }
             
         case .grid, .carousel:
-            let itemCount = 300 + (Int(tab.title.last?.wholeNumberValue ?? 1) * 3)
+            let itemCount = 400 + (Int(tab.title.last?.wholeNumberValue ?? 1) * 3)
             refs.append(createGridSectionOptimized(prefix: prefix, itemCount: itemCount, sharedModels: sharedModels))
         }
         
@@ -2571,7 +2648,7 @@ final class ViewController: UIViewController {
             isValueEnabled: true,
             isVideoEnabled: false,
             isShoppingEnabled: true,
-            experience: .carousel
+            experience: .list
         )
         sectionDataManager.onSectionsDidUpdate = { [weak self] in
             self?.handleDataUpdate()
@@ -2642,6 +2719,8 @@ final class ViewController: UIViewController {
             guard let self = self else { return nil }
             
             guard let section = self.sectionDataManager.getSection(at: indexPath.section) else { return nil }
+        
+            guard !section.items.isEmpty else { return nil }
             
             switch section.type {
             case .info:
@@ -2824,8 +2903,11 @@ final class ViewController: UIViewController {
         let sections = sectionDataManager.sections
         snapshot.appendSections(sections)
         
-        for section in sections {
-            let items: [ItemIdentifier] = createItemIdentifiers(for: section)
+        for (index, section) in sections.enumerated() {
+            // Forzar la carga de items antes de crear identificadores
+            guard let loadedSection = sectionDataManager.getSection(at: index) else { continue }
+            
+            let items: [ItemIdentifier] = createItemIdentifiers(for: loadedSection)
             snapshot.appendItems(items, toSection: section)
         }
         
