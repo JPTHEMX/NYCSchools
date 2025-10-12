@@ -466,6 +466,13 @@ class SectionDataManager {
     func setSelectedTabIndex(_ index: Int, columnCount: Int) {
         guard index != selectedTabIndex, tabData.indices.contains(index) else { return }
         selectedTabIndex = index
+        
+        // Limpiar el shopping placeholder antes de cambiar de tab
+        if let placeholderId = shoppingPlaceholderId {
+            contentStore.removeValue(forKey: placeholderId)
+            shoppingPlaceholderId = nil
+        }
+        
         updateShoppingState(columnCount: columnCount, shouldNotify: true)
         updateListSectionPositions()
     }
@@ -568,6 +575,23 @@ class SectionDataManager {
             return
         }
         
+        // Obtiene los IDs de los items del carrusel para identificar los modelos compartidos.
+        let carouselItemIdsSet: Set<String?>
+        if let carouselRef = refs.first(where: { $0.type == .carousel }) {
+            carouselItemIdsSet = Set(carouselRef.itemIds.compactMap { $0 })
+        } else {
+            carouselItemIdsSet = []
+        }
+        
+        // Cuenta los modelos que existen tanto en la cuadrícula como en el carrusel (es decir, modelos "compartidos").
+        var sharedModelCount = 0
+        for id in gridRef.itemIds {
+            guard let id = id else { continue }
+            if carouselItemIdsSet.contains(id) {
+                sharedModelCount += 1
+            }
+        }
+        
         let realItemCount = gridRef.itemIds.compactMap { id -> ContentModel? in
             guard let id = id else { return nil }
             return contentStore[id]
@@ -590,15 +614,18 @@ class SectionDataManager {
             }
         }
         
+        // Ajusta el índice base según la cantidad de modelos compartidos.
+        let adjustedBaseIndex = baseShoppingIndex + sharedModelCount
+        
         var finalIndex: Int
-        if baseShoppingIndex >= gridStartIndex {
-            let indexRelativeToGrid = baseShoppingIndex - gridStartIndex
+        if adjustedBaseIndex >= gridStartIndex {
+            let indexRelativeToGrid = adjustedBaseIndex - gridStartIndex
             let offset = indexRelativeToGrid % columnCount
             
             if offset == 0 {
-                finalIndex = baseShoppingIndex
+                finalIndex = adjustedBaseIndex
             } else {
-                finalIndex = baseShoppingIndex - offset + columnCount
+                finalIndex = adjustedBaseIndex - offset + columnCount
             }
         } else {
             finalIndex = gridStartIndex
@@ -2544,7 +2571,7 @@ final class ViewController: UIViewController {
             isValueEnabled: true,
             isVideoEnabled: false,
             isShoppingEnabled: true,
-            experience: .list
+            experience: .carousel
         )
         sectionDataManager.onSectionsDidUpdate = { [weak self] in
             self?.handleDataUpdate()
@@ -2867,8 +2894,6 @@ final class ViewController: UIViewController {
         }
         return nil
     }
-    
-
     
     private func reloadSectionsContainingModel(_ model: ContentModel) {
         var snapshot = dataSource.snapshot()
