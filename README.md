@@ -13,11 +13,11 @@ struct TabItem: Hashable, Sendable {
 enum SectionHeader: Hashable, Sendable {
     case title(String)
     case tabBar(tabs: [TabItem], selectedIndex: Int)
-    case list(ContentModel)
-
-    func containsModel(_ model: ContentModel) -> Bool {
-        if case .list(let headerModel) = self {
-            return headerModel.id == model.id
+    case list(itemId: String?) // Cambio: usar itemId en lugar de ContentModel
+    
+    func containsModelId(_ modelId: String?) -> Bool {
+        if case .list(let headerItemId) = self {
+            return headerItemId == modelId
         }
         return false
     }
@@ -179,13 +179,13 @@ struct Section: Hashable, Sendable {
     let id: String?
     let type: SectionType
     var header: SectionHeader?
-    var items: [any ContentItem]
+    internal let itemIds: [String?]
     
-    init(id: String? = UUID().uuidString, type: SectionType, header: SectionHeader? = nil, items: [any ContentItem] = []) {
+    init(id: String? = UUID().uuidString, type: SectionType, header: SectionHeader? = nil, itemIds: [String?] = []) {
         self.id = id
         self.type = type
         self.header = header
-        self.items = items
+        self.itemIds = itemIds
     }
     
     func hash(into hasher: inout Hasher) {
@@ -216,10 +216,6 @@ class SectionDataManager {
     private var listSectionPositions: [Int: ListItemPosition] = [:]
     private var shoppingPlaceholderId: String?
     
-    // Cache para mejorar rendimiento
-    private var sectionsCache: [TabItem: [Section]] = [:]
-    private var needsCacheInvalidation: Set<TabItem> = []
-    
     var isValueEnabled: Bool
     var isVideoEnabled: Bool
     var isShoppingEnabled: Bool
@@ -236,28 +232,17 @@ class SectionDataManager {
     }
     
     var sections: [Section] {
-        guard let tab = currentTab else { return [] }
+        guard let tab = currentTab,
+              let refs = sectionsByTab[tab] else { return [] }
         
-        // Si ya existe en cache y no necesita invalidación, retornar directamente
-        if let cached = sectionsCache[tab], !needsCacheInvalidation.contains(tab) {
-            return cached
-        }
-        
-        // Si no, construir esqueleto ligero de secciones
-        guard let refs = sectionsByTab[tab] else { return [] }
-        
-        let resolvedSections = refs.map { ref in
+        return refs.map { ref in
             Section(
                 id: ref.sectionId,
                 type: ref.type,
-                header: ref.header, // Mantener header sin resolver para tipos simples
-                items: [] // Vacío inicialmente para lazy loading
+                header: ref.header,
+                itemIds: ref.itemIds
             )
         }
-        
-        sectionsCache[tab] = resolvedSections
-        needsCacheInvalidation.remove(tab)
-        return resolvedSections
     }
     
     init(isValueEnabled: Bool = false,
@@ -275,69 +260,65 @@ class SectionDataManager {
         }
     }
     
-    private func resolveHeader(_ header: SectionHeader?) -> SectionHeader? {
-        guard let header = header else { return nil }
+    func resolveItem(at index: Int, in section: Section) -> (any ContentItem)? {
+        guard section.itemIds.indices.contains(index),
+              let itemId = section.itemIds[index] else { return nil }
+        return resolveItemById(itemId, type: section.type)
+    }
+    
+    func resolveItemById(_ id: String?, type: SectionType) -> (any ContentItem)? {
+        guard let id = id else { return nil }
         
-        switch header {
-        case .list(let model):
-            if let id = model.id, let updatedModel = contentStore[id] {
-                return .list(updatedModel)
-            }
-            return header
-        default:
-            return header
+        switch type {
+        case .info:
+            return infoStore[id]
+        case .footer:
+            return footerStore[id]
+        case .disclaimer:
+            return disclaimerStore[id]
+        case .carousel, .grid, .list:
+            return contentStore[id]
         }
     }
     
-    private func resolveItems(for ids: [String?], type: SectionType) -> [any ContentItem] {
-        switch type {
-        case .info:
-            return ids.compactMap { id in
-                guard let id = id else { return nil }
-                return infoStore[id]
-            }
-        case .footer:
-            return ids.compactMap { id in
-                guard let id = id else { return nil }
-                return footerStore[id]
-            }
-        case .disclaimer:
-            return ids.compactMap { id in
-                guard let id = id else { return nil }
-                return disclaimerStore[id]
-            }
-        case .carousel, .grid, .list:
-            return ids.compactMap { id in
-                guard let id = id else { return nil }
-                return contentStore[id]
-            }
+    func resolveVisibleItems(in range: Range<Int>, for section: Section) -> [any ContentItem] {
+        let validRange = range.clamped(to: section.itemIds.indices)
+        return validRange.compactMap { index in
+            guard let itemId = section.itemIds[index] else { return nil }
+            return resolveItemById(itemId, type: section.type)
         }
+    }
+    
+    func resolveAllItems(for section: Section) -> [any ContentItem] {
+        return section.itemIds.compactMap { itemId in
+            guard let itemId = itemId else { return nil }
+            return resolveItemById(itemId, type: section.type)
+        }
+    }
+    
+    func resolveHeader(_ header: SectionHeader?) -> SectionHeader? {
+        // Ya no necesitamos resolver nada porque list ahora usa itemId
+        return header
+    }
+    
+    func getSectionLightweight(at index: Int) -> Section? {
+        guard let tab = currentTab,
+              let refs = sectionsByTab[tab],
+              refs.indices.contains(index) else {
+            return nil
+        }
+        
+        let ref = refs[index]
+        return Section(
+            id: ref.sectionId,
+            type: ref.type,
+            header: ref.header,
+            itemIds: ref.itemIds
+        )
     }
     
     func getSection(at index: Int) -> Section? {
-        let sections = self.sections // Usa la versión cacheada
-        guard sections.indices.contains(index) else { return nil }
-        
-        var section = sections[index]
-        
-        // Solo resolver items si están vacíos (lazy loading)
-        if section.items.isEmpty {
-            guard let tab = currentTab,
-                  let refs = sectionsByTab[tab],
-                  refs.indices.contains(index) else { return section }
-            
-            let ref = refs[index]
-            section.items = resolveItems(for: ref.itemIds, type: ref.type)
-            section.header = resolveHeader(ref.header)
-            
-            // Actualizar cache con la sección completa
-            if var cachedSections = sectionsCache[tab] {
-                cachedSections[index] = section
-                sectionsCache[tab] = cachedSections
-            }
-        }
-        
-        return section
+        return getSectionLightweight(at: index)
     }
     
     func updateSection(_ section: Section, at index: Int) {
@@ -347,67 +328,26 @@ class SectionDataManager {
             return
         }
         
-        let itemIds = section.items.compactMap { item -> String? in
-            if let contentModel = item as? ContentModel, let id = contentModel.id {
-                contentStore[id] = contentModel
-                return id
-            } else if let infoModel = item as? InfoModel, let id = infoModel.id {
-                infoStore[id] = infoModel
-                return id
-            } else if let footerModel = item as? FooterModel, let id = footerModel.id {
-                footerStore[id] = footerModel
-                return id
-            } else if let disclaimerModel = item as? DisclaimerModel, let id = disclaimerModel.id {
-                disclaimerStore[id] = disclaimerModel
-                return id
-            }
-            return item.id
-        }
-        
         refs[index] = SectionReference(
             sectionId: section.id,
             type: section.type,
             header: section.header,
-            itemIds: itemIds
+            itemIds: section.itemIds
         )
         sectionsByTab[tab] = refs
-        
-        // Invalidar cache para este tab
-        needsCacheInvalidation.insert(tab)
     }
     
     func getItem(at indexPath: IndexPath) -> (any ContentItem)? {
-        guard let tab = currentTab,
-              let refs = sectionsByTab[tab],
-              refs.indices.contains(indexPath.section) else {
-            return nil
-        }
+        guard let section = getSectionLightweight(at: indexPath.section) else { return nil }
         
-        let ref = refs[indexPath.section]
-        
-        switch ref.type {
+        switch section.type {
         case .carousel:
-            let items = ref.itemIds.compactMap { id -> ContentModel? in
-                guard let id = id else { return nil }
-                return contentStore[id]
+            return section.itemIds.first.flatMap { itemId in
+                guard let itemId = itemId else { return nil }
+                return contentStore[itemId]
             }
-            return items.first
-        case .info:
-            guard let itemId = ref.itemIds[safe: indexPath.item],
-                  let id = itemId else { return nil }
-            return infoStore[id]
-        case .footer:
-            guard let itemId = ref.itemIds[safe: indexPath.item],
-                  let id = itemId else { return nil }
-            return footerStore[id]
-        case .disclaimer:
-            guard let itemId = ref.itemIds[safe: indexPath.item],
-                  let id = itemId else { return nil }
-            return disclaimerStore[id]
         default:
-            guard let itemId = ref.itemIds[safe: indexPath.item],
-                  let id = itemId else { return nil }
-            return contentStore[id]
+            return resolveItem(at: indexPath.item, in: section)
         }
     }
     
@@ -426,49 +366,27 @@ class SectionDataManager {
         refs[sectionIndex].itemIds = itemIds
         sectionsByTab[tab] = refs
         
-        // Invalidar cache
-        needsCacheInvalidation.insert(tab)
-        
         onSectionsDidUpdate?()
     }
     
     func updateItem(_ item: any ContentItem, at indexPath: IndexPath) {
         if let contentModel = item as? ContentModel, let id = contentModel.id {
             contentStore[id] = contentModel
-            if let tab = currentTab {
-                needsCacheInvalidation.insert(tab)
-            }
             onSectionsDidUpdate?()
         } else if let infoModel = item as? InfoModel, let id = infoModel.id {
             infoStore[id] = infoModel
-            if let tab = currentTab {
-                needsCacheInvalidation.insert(tab)
-            }
             onSectionsDidUpdate?()
         } else if let footerModel = item as? FooterModel, let id = footerModel.id {
             footerStore[id] = footerModel
-            if let tab = currentTab {
-                needsCacheInvalidation.insert(tab)
-            }
             onSectionsDidUpdate?()
         } else if let disclaimerModel = item as? DisclaimerModel, let id = disclaimerModel.id {
             disclaimerStore[id] = disclaimerModel
-            if let tab = currentTab {
-                needsCacheInvalidation.insert(tab)
-            }
             onSectionsDidUpdate?()
-        } else {
-            guard var section = getSection(at: indexPath.section) else { return }
-            
-            if indexPath.item < section.items.count {
-                section.items[indexPath.item] = item
-            }
-            updateSection(section, at: indexPath.section)
         }
     }
     
     func getHeader(for sectionIndex: Int) -> SectionHeader? {
-        guard let section = getSection(at: sectionIndex) else { return nil }
+        guard let section = getSectionLightweight(at: sectionIndex) else { return nil }
         
         if case .tabBar(let tabs, _) = section.header {
             return .tabBar(tabs: tabs, selectedIndex: selectedTabIndex)
@@ -484,9 +402,6 @@ class SectionDataManager {
         
         refs[sectionIndex].header = header
         sectionsByTab[tab] = refs
-        
-        // Invalidar cache
-        needsCacheInvalidation.insert(tab)
     }
     
     func numberOfSections() -> Int {
@@ -494,47 +409,27 @@ class SectionDataManager {
     }
     
     func numberOfItems(in sectionIndex: Int) -> Int {
-        guard let section = getSection(at: sectionIndex) else { return 0 }
+        guard let section = getSectionLightweight(at: sectionIndex) else { return 0 }
         
         switch section.type {
         case .carousel:
-            return section.items.isEmpty ? 0 : 1
+            return section.itemIds.isEmpty ? 0 : 1
         case .list:
-            if let contentModel = section.items.first as? ContentModel {
+            if let firstId = section.itemIds.first,
+               let id = firstId,
+               let contentModel = contentStore[id] {
                 return contentModel.isDetailsVisible ? 1 : 0
             }
             return 0
         default:
-            return section.items.count
+            return section.itemIds.count
         }
     }
     
     func setSelectedTabIndex(_ index: Int, columnCount: Int) {
         guard index != selectedTabIndex, tabData.indices.contains(index) else { return }
-        
-        // Limpiar cache del tab anterior si es muy grande para gestionar memoria
-        if let previousTab = currentTab,
-           let previousSections = sectionsCache[previousTab] {
-            let totalItems = previousSections.reduce(0) { total, section in
-                if section.items.isEmpty {
-                    // Si aún no se han resuelto, contar los IDs
-                    if let refs = sectionsByTab[previousTab],
-                       let ref = refs.first(where: { $0.sectionId == section.id }) {
-                        return total + ref.itemIds.count
-                    }
-                }
-                return total + section.items.count
-            }
-            
-            // Limpiar cache si hay muchos items
-            if totalItems > 100 {
-                sectionsCache.removeValue(forKey: previousTab)
-            }
-        }
-        
         selectedTabIndex = index
         
-        // Limpiar el shopping placeholder antes de cambiar de tab
         if let placeholderId = shoppingPlaceholderId {
             contentStore.removeValue(forKey: placeholderId)
             shoppingPlaceholderId = nil
@@ -560,10 +455,10 @@ class SectionDataManager {
     }
     
     func shouldUseValueCell(at indexPath: IndexPath) -> Bool {
-        guard let section = getSection(at: indexPath.section),
+        guard let section = getSectionLightweight(at: indexPath.section),
               section.type == .grid else { return false }
         
-        if let item = section.items[safe: indexPath.item] as? ContentModel,
+        if let item = resolveItem(at: indexPath.item, in: section) as? ContentModel,
            !item.isShoppingPlaceholder {
             return isValueEnabled && indexPath.item == 0
         }
@@ -571,10 +466,10 @@ class SectionDataManager {
     }
     
     func shouldUseShoppingCell(at indexPath: IndexPath) -> Bool {
-        guard let section = getSection(at: indexPath.section),
+        guard let section = getSectionLightweight(at: indexPath.section),
               section.type == .grid else { return false }
         
-        if let item = section.items[safe: indexPath.item] as? ContentModel {
+        if let item = resolveItem(at: indexPath.item, in: section) as? ContentModel {
             return item.isShoppingPlaceholder
         }
         return false
@@ -585,12 +480,6 @@ class SectionDataManager {
               let id = updatedModel.id else { return }
         
         contentStore[id] = updatedModel
-        
-        // Invalidar cache
-        if let tab = currentTab {
-            needsCacheInvalidation.insert(tab)
-        }
-        
         if notify {
             onSectionsDidUpdate?()
         }
@@ -598,9 +487,8 @@ class SectionDataManager {
     
     func updateListSectionPositions() {
         listSectionPositions.removeAll()
-        guard experience == .list else {
-            return
-        }
+        guard experience == .list else { return }
+        
         let sections = self.sections
         let listIndices = sections.enumerated().compactMap { index, section in
             section.type == .list ? index : nil
@@ -628,8 +516,6 @@ class SectionDataManager {
         infoStore.removeAll()
         footerStore.removeAll()
         disclaimerStore.removeAll()
-        sectionsCache.removeAll()
-        needsCacheInvalidation.removeAll()
         setupInitialData()
         selectedTabIndex = 0
     }
@@ -639,7 +525,6 @@ class SectionDataManager {
               let tab = tabData[safe: index] else { return }
         
         sectionsByTab[tab] = createSectionsOptimized(for: tab)
-        needsCacheInvalidation.insert(tab)
     }
     
     public func updateShoppingCellIndex(columnCount: Int) {
@@ -743,9 +628,6 @@ class SectionDataManager {
         refs[gridIndex] = gridRef
         sectionsByTab[tab] = refs
         
-        // Invalidar cache
-        needsCacheInvalidation.insert(tab)
-        
         if shouldNotify {
             onSectionsDidUpdate?()
         }
@@ -758,7 +640,6 @@ class SectionDataManager {
         updateListSectionPositions()
     }
     
-    // Los métodos createSectionsOptimized y relacionados permanecen sin cambios...
     private func createSectionsOptimized(for tab: TabItem) -> [SectionReference] {
         let prefix = tab.title.replacingOccurrences(of: "Category", with: "Content")
         
@@ -882,7 +763,7 @@ class SectionDataManager {
     }
 
     private func createListSectionOptimized(item: ContentModel) -> SectionReference {
-        let header = SectionHeader.list(item)
+        let header = SectionHeader.list(itemId: item.id) // CAMBIO: usar itemId
         return SectionReference(
             sectionId: UUID().uuidString,
             type: .list,
@@ -920,28 +801,6 @@ class SectionDataManager {
             header: nil,
             itemIds: [disclaimer.id].compactMap { $0 }
         )
-    }
-    
-    func debugPrintSections() {
-        print("=== Debug: Current Sections ===")
-        for (index, section) in sections.enumerated() {
-            print("Section \(index): Type = \(section.type)")
-            if let header = section.header {
-                switch header {
-                case .tabBar(let tabs, let selected):
-                    print("  Header: TabBar with \(tabs.count) tabs, selected: \(selected)")
-                    for (i, tab) in tabs.enumerated() {
-                        print("    Tab \(i): \(tab.title)")
-                    }
-                case .title(let title):
-                    print("  Header: Title = \(title)")
-                case .list(_):
-                    print("  Header: List")
-                }
-            }
-            print("  Items: \(section.items.count)")
-        }
-        print("==============================")
     }
 }
 
@@ -2718,19 +2577,17 @@ final class ViewController: UIViewController {
         dataSource = DataSource(collectionView: collectionView) { [weak self] (collectionView, indexPath, itemIdentifier) -> UICollectionViewCell? in
             guard let self = self else { return nil }
             
-            guard let section = self.sectionDataManager.getSection(at: indexPath.section) else { return nil }
-        
-            guard !section.items.isEmpty else { return nil }
+            guard let section = self.sectionDataManager.getSectionLightweight(at: indexPath.section) else { return nil }
             
             switch section.type {
             case .info:
-                guard let model = section.items[safe: indexPath.item] as? InfoModel else { return nil }
+                guard let model = self.sectionDataManager.resolveItem(at: indexPath.item, in: section) as? InfoModel else { return nil }
                 let cell = collectionView.dequeueReusableCell(withReuseIdentifier: InfoCell.reuseIdentifier, for: indexPath) as! InfoCell
                 cell.configure(with: model)
                 return cell
                 
             case .carousel:
-                let items = section.items.compactMap { $0 as? ContentModel }
+                let items = self.sectionDataManager.resolveAllItems(for: section).compactMap { $0 as? ContentModel }
                 let cell = collectionView.dequeueReusableCell(withReuseIdentifier: CarouselCell.reuseIdentifier, for: indexPath) as! CarouselCell
                 cell.configure(with: items)
                 
@@ -2744,7 +2601,7 @@ final class ViewController: UIViewController {
                 return cell
                 
             case .grid:
-                guard let item = section.items[safe: indexPath.item] as? ContentModel else { return nil }
+                guard let item = self.sectionDataManager.resolveItem(at: indexPath.item, in: section) as? ContentModel else { return nil }
                 
                 if self.sectionDataManager.shouldUseShoppingCell(at: indexPath) {
                     let cell = collectionView.dequeueReusableCell(withReuseIdentifier: ShoppingCell.reuseIdentifier, for: indexPath) as! ShoppingCell
@@ -2761,7 +2618,7 @@ final class ViewController: UIViewController {
                 }
                 
             case .list:
-                guard let item = section.items.first as? ContentModel else { return nil }
+                guard let item = self.sectionDataManager.resolveItem(at: 0, in: section) as? ContentModel else { return nil }
                 let cell = collectionView.dequeueReusableCell(withReuseIdentifier: ListDetailCell.reuseIdentifier, for: indexPath) as! ListDetailCell
                 cell.configure(with: item)
                 cell.onScrollToDisclaimerTapped = { [weak self] in
@@ -2771,12 +2628,13 @@ final class ViewController: UIViewController {
                 return cell
                 
             case .footer:
-                guard let model = section.items[safe: indexPath.item] as? FooterModel else { return nil }
+                guard let model = self.sectionDataManager.resolveItem(at: indexPath.item, in: section) as? FooterModel else { return nil }
                 let cell = collectionView.dequeueReusableCell(withReuseIdentifier: FooterCell.reuseIdentifier, for: indexPath) as! FooterCell
                 cell.configure(with: model)
                 return cell
+                
             case .disclaimer:
-                guard let model = section.items[safe: indexPath.item] as? DisclaimerModel else { return nil }
+                guard let model = self.sectionDataManager.resolveItem(at: indexPath.item, in: section) as? DisclaimerModel else { return nil }
                 let cell = collectionView.dequeueReusableCell(withReuseIdentifier: DisclaimerCell.reuseIdentifier, for: indexPath) as! DisclaimerCell
                 cell.configure(with: model)
                 return cell
@@ -2803,7 +2661,6 @@ final class ViewController: UIViewController {
                 header.delegate = self
                 
                 let tabsToUse = tabs.isEmpty ? self.sectionDataManager.tabData : tabs
-                
                 header.configure(
                     with: tabsToUse,
                     selectedIndex: selectedIndex,
@@ -2811,87 +2668,90 @@ final class ViewController: UIViewController {
                 )
                 return header
                 
-            case .list(let item):
+            case .list(let itemId): // CAMBIO: ahora recibimos itemId
                 let header = collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: ListHeaderView.reuseIdentifier, for: indexPath) as! ListHeaderView
-                header.configure(with: item)
                 
-                header.onHeaderSelect = { [weak self] selectedModel in
-                    guard let self = self, !selectedModel.isLoading else { return }
+                // Resolver el modelo basándose en el itemId
+                if let itemId = itemId,
+                   let model = self.sectionDataManager.resolveItemById(itemId, type: .list) as? ContentModel {
+                    header.configure(with: model)
+                    
+                    header.onHeaderSelect = { [weak self] selectedModel in
+                        guard let self = self, !selectedModel.isLoading else { return }
 
-                    var loadingModel = selectedModel
-                    loadingModel.isLoading = true
-                    loadingModel.isSelected = true
-                    
-                    self.sectionDataManager.updateContentModel(loadingModel, notify: false)
-                    
-                    if let carouselSectionIndex = self.sectionDataManager.sections.firstIndex(where: { $0.type == .carousel }),
-                       let carouselSection = self.sectionDataManager.getSection(at: carouselSectionIndex) {
-                        var updatedCarouselItems = carouselSection.items.compactMap { $0 as? ContentModel }
-                        if let index = updatedCarouselItems.firstIndex(where: { $0.id == loadingModel.id }) {
-                            updatedCarouselItems[index] = loadingModel
-                            self.sectionDataManager.updateCarouselItems(updatedCarouselItems, at: carouselSectionIndex)
-                        }
-                    }
-                    
-                    var snapshot = self.dataSource.snapshot()
-                    
-                    for section in snapshot.sectionIdentifiers {
-                        var shouldReload = false
+                        var loadingModel = selectedModel
+                        loadingModel.isLoading = true
+                        loadingModel.isSelected = true
                         
-                        if section.type == .list,
-                           let header = section.header,
-                           header.containsModel(selectedModel) {
-                            shouldReload = true
-                        } else if section.type == .carousel {
-                            shouldReload = section.items.contains { ($0 as? ContentModel)?.id == selectedModel.id }
-                        }
-                        
-                        if shouldReload {
-                            snapshot.reloadSections([section])
-                        }
-                    }
-                    
-                    self.dataSource.apply(snapshot, animatingDifferences: false)
-
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        var finishedModel = loadingModel
-                        finishedModel.isLoading = false
-                        
-                        self.sectionDataManager.updateContentModel(finishedModel, notify: false)
+                        self.sectionDataManager.updateContentModel(loadingModel, notify: false)
                         
                         if let carouselSectionIndex = self.sectionDataManager.sections.firstIndex(where: { $0.type == .carousel }),
-                           let carouselSection = self.sectionDataManager.getSection(at: carouselSectionIndex) {
-                            var updatedCarouselItems = carouselSection.items.compactMap { $0 as? ContentModel }
-                            if let index = updatedCarouselItems.firstIndex(where: { $0.id == finishedModel.id }) {
-                                updatedCarouselItems[index] = finishedModel
+                           let carouselSection = self.sectionDataManager.getSectionLightweight(at: carouselSectionIndex) {
+                            var updatedCarouselItems = self.sectionDataManager.resolveAllItems(for: carouselSection).compactMap { $0 as? ContentModel }
+                            if let index = updatedCarouselItems.firstIndex(where: { $0.id == loadingModel.id }) {
+                                updatedCarouselItems[index] = loadingModel
                                 self.sectionDataManager.updateCarouselItems(updatedCarouselItems, at: carouselSectionIndex)
                             }
                         }
                         
-                        var updatedSnapshot = self.dataSource.snapshot()
-                        
-                        for section in updatedSnapshot.sectionIdentifiers {
+                        var snapshot = self.dataSource.snapshot()
+                        for section in snapshot.sectionIdentifiers {
                             var shouldReload = false
                             
                             if section.type == .list,
                                let header = section.header,
-                               header.containsModel(finishedModel) {
+                               header.containsModelId(selectedModel.id) { // CAMBIO: usar containsModelId
                                 shouldReload = true
                             } else if section.type == .carousel {
-                                shouldReload = section.items.contains { ($0 as? ContentModel)?.id == finishedModel.id }
+                                shouldReload = section.itemIds.contains { $0 == selectedModel.id }
                             }
                             
                             if shouldReload {
-                                updatedSnapshot.reloadSections([section])
+                                snapshot.reloadSections([section])
                             }
                         }
                         
-                        self.dataSource.apply(updatedSnapshot, animatingDifferences: false)
+                        self.dataSource.apply(snapshot, animatingDifferences: false)
+
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            var finishedModel = loadingModel
+                            finishedModel.isLoading = false
+                            
+                            self.sectionDataManager.updateContentModel(finishedModel, notify: false)
+                            
+                            if let carouselSectionIndex = self.sectionDataManager.sections.firstIndex(where: { $0.type == .carousel }),
+                               let carouselSection = self.sectionDataManager.getSectionLightweight(at: carouselSectionIndex) {
+                                var updatedCarouselItems = self.sectionDataManager.resolveAllItems(for: carouselSection).compactMap { $0 as? ContentModel }
+                                if let index = updatedCarouselItems.firstIndex(where: { $0.id == finishedModel.id }) {
+                                    updatedCarouselItems[index] = finishedModel
+                                    self.sectionDataManager.updateCarouselItems(updatedCarouselItems, at: carouselSectionIndex)
+                                }
+                            }
+                            
+                            var updatedSnapshot = self.dataSource.snapshot()
+                            for section in updatedSnapshot.sectionIdentifiers {
+                                var shouldReload = false
+                                
+                                if section.type == .list,
+                                   let header = section.header,
+                                   header.containsModelId(finishedModel.id) { // CAMBIO: usar containsModelId
+                                    shouldReload = true
+                                } else if section.type == .carousel {
+                                    shouldReload = section.itemIds.contains { $0 == finishedModel.id }
+                                }
+                                
+                                if shouldReload {
+                                    updatedSnapshot.reloadSections([section])
+                                }
+                            }
+                            
+                            self.dataSource.apply(updatedSnapshot, animatingDifferences: false)
+                        }
                     }
-                }
-                
-                header.onDetailsButtonTapped = { [weak self] in
-                    self?.toggleListDetails(at: indexPath.section)
+                    
+                    header.onDetailsButtonTapped = { [weak self] in
+                        self?.toggleListDetails(at: indexPath.section)
+                    }
                 }
                 return header
             }
@@ -2903,11 +2763,8 @@ final class ViewController: UIViewController {
         let sections = sectionDataManager.sections
         snapshot.appendSections(sections)
         
-        for (index, section) in sections.enumerated() {
-            // Forzar la carga de items antes de crear identificadores
-            guard let loadedSection = sectionDataManager.getSection(at: index) else { continue }
-            
-            let items: [ItemIdentifier] = createItemIdentifiers(for: loadedSection)
+        for section in sections {
+            let items: [ItemIdentifier] = createItemIdentifiers(for: section)
             snapshot.appendItems(items, toSection: section)
         }
         
@@ -2917,7 +2774,8 @@ final class ViewController: UIViewController {
     private func createItemIdentifiers(for section: Section) -> [ItemIdentifier] {
         switch section.type {
         case .carousel:
-            if section.items.isEmpty {
+            // Para carousel, solo necesitamos un identificador
+            if section.itemIds.isEmpty {
                 return []
             } else {
                 return [ItemIdentifier(
@@ -2928,7 +2786,10 @@ final class ViewController: UIViewController {
             }
             
         case .list:
-            if let contentModel = section.items.first as? ContentModel,
+            // Para list, verificar si está expandido
+            if let firstId = section.itemIds.first,
+               let id = firstId,
+               let contentModel = sectionDataManager.resolveItemById(id, type: .list) as? ContentModel,
                contentModel.isDetailsVisible {
                 return [ItemIdentifier(
                     id: contentModel.id,
@@ -2938,43 +2799,17 @@ final class ViewController: UIViewController {
             }
             return []
             
-        case .grid:
-            return section.items.map { item in
-                ItemIdentifier(
-                    id: item.id,
+        case .grid, .info, .footer, .disclaimer:
+            // Para estos tipos, crear un identificador por cada itemId
+            return section.itemIds.compactMap { itemId in
+                guard let itemId = itemId else { return nil }
+                return ItemIdentifier(
+                    id: itemId,
                     sectionId: section.id,
-                    type: .single(item.id)
-                )
-            }
-            
-        default:
-            return section.items.map { item in
-                ItemIdentifier(
-                    id: item.id,
-                    sectionId: section.id,
-                    type: .single(item.id)
+                    type: .single(itemId)
                 )
             }
         }
-    }
-    
-    private func findSectionIndexForModel(_ model: ContentModel) -> Int? {
-        for (index, section) in sectionDataManager.sections.enumerated() {
-            switch section.type {
-            case .list:
-                if let header = section.header,
-                   header.containsModel(model) {
-                    return index
-                }
-            case .carousel, .grid:
-                if section.items.contains(where: { ($0 as? ContentModel)?.id == model.id }) {
-                    return index
-                }
-            default:
-                continue
-            }
-        }
-        return nil
     }
     
     private func reloadSectionsContainingModel(_ model: ContentModel) {
@@ -2985,13 +2820,11 @@ final class ViewController: UIViewController {
             var containsModel = false
             
             switch section.type {
-            case .carousel:
-                containsModel = section.items.contains { ($0 as? ContentModel)?.id == model.id }
-            case .grid:
-                containsModel = section.items.contains { ($0 as? ContentModel)?.id == model.id }
+            case .carousel, .grid:
+                containsModel = section.itemIds.contains { $0 == model.id }
             case .list:
                 if let header = section.header {
-                    containsModel = header.containsModel(model)
+                    containsModel = header.containsModelId(model.id)
                 }
             default:
                 break
@@ -3008,23 +2841,26 @@ final class ViewController: UIViewController {
         }
     }
     
-    
-    private func toggleListDetails(at sectionIndex: Int) {
+    func toggleListDetails(at sectionIndex: Int) {
         let previouslyExpanded = expandedListSection
         let isCollapsing = previouslyExpanded == sectionIndex
         
         let currentOffset = collectionView.contentOffset
         
         if let oldIndex = previouslyExpanded, !isCollapsing {
-            if let oldSection = sectionDataManager.getSection(at: oldIndex),
-               var oldModel = oldSection.items.first as? ContentModel {
+            if let oldSection = sectionDataManager.getSectionLightweight(at: oldIndex),
+               let firstId = oldSection.itemIds.first,
+               let id = firstId,
+               var oldModel = sectionDataManager.resolveItemById(id, type: .list) as? ContentModel {
                 oldModel.isDetailsVisible = false
                 sectionDataManager.updateContentModel(oldModel, notify: false)
             }
         }
         
-        if let currentSection = sectionDataManager.getSection(at: sectionIndex),
-           var currentModel = currentSection.items.first as? ContentModel {
+        if let currentSection = sectionDataManager.getSectionLightweight(at: sectionIndex),
+           let firstId = currentSection.itemIds.first,
+           let id = firstId,
+           var currentModel = sectionDataManager.resolveItemById(id, type: .list) as? ContentModel {
             currentModel.isDetailsVisible.toggle()
             sectionDataManager.updateContentModel(currentModel, notify: false)
             
@@ -3404,23 +3240,27 @@ final class ViewController: UIViewController {
         return sectionHeader
     }
     
-    private func calculateCarouselHeight(in sectionIndex: Int) -> CGFloat {
-        guard let section = sectionDataManager.getSection(at: sectionIndex),
+    func calculateCarouselHeight(in sectionIndex: Int) -> CGFloat {
+        guard let section = sectionDataManager.getSectionLightweight(at: sectionIndex),
               section.type == .carousel,
-              !section.items.isEmpty else {
+              !section.itemIds.isEmpty else {
             return 220.0
         }
         
-        let items = section.items.compactMap { $0 as? ContentModel }
+        // Resolver items del carousel para calcular altura
+        let items = sectionDataManager.resolveAllItems(for: section).compactMap { $0 as? ContentModel }
+        
+        guard !items.isEmpty else { return 220.0 }
+        
         let sizingCell = CarouselCell(frame: .zero)
         sizingCell.configure(with: items)
         return sizingCell.calculateHeight(forWidth: 132.0)
     }
     
-    private func calculateMaxGridCellHeight(for cellWidth: CGFloat, in sectionIndex: Int) -> CGFloat {
-        guard let section = sectionDataManager.getSection(at: sectionIndex),
+    func calculateMaxGridCellHeight(for cellWidth: CGFloat, in sectionIndex: Int) -> CGFloat {
+        guard let section = sectionDataManager.getSectionLightweight(at: sectionIndex),
               section.type == .grid,
-              !section.items.isEmpty else {
+              !section.itemIds.isEmpty else {
             return 192.0
         }
         
@@ -3429,8 +3269,11 @@ final class ViewController: UIViewController {
         let shoppingSizingCell = ShoppingCell(frame: .zero)
         let standardSizingCell = TitleSubtitleCell(frame: .zero)
         
-        for (index, item) in section.items.enumerated() {
-            guard let contentItem = item as? ContentModel else { continue }
+        // Resolver solo los primeros items para calcular altura
+        let itemsToCheck = min(10, section.itemIds.count) // Optimización: solo verificar los primeros 10
+        
+        for index in 0..<itemsToCheck {
+            guard let contentItem = sectionDataManager.resolveItem(at: index, in: section) as? ContentModel else { continue }
             
             let sizingView: UIView
             let indexPath = IndexPath(item: index, section: sectionIndex)
@@ -3464,9 +3307,9 @@ extension ViewController: UICollectionViewDelegate {
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: true)
         
-        guard let section = sectionDataManager.getSection(at: indexPath.section),
+        guard let section = sectionDataManager.getSectionLightweight(at: indexPath.section),
               section.type == .grid,
-              let item = section.items[safe: indexPath.item] as? ContentModel,
+              let item = sectionDataManager.resolveItem(at: indexPath.item, in: section) as? ContentModel,
               !item.isShoppingPlaceholder else { return }
         
         var updatedModel = item
