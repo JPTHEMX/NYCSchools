@@ -78,7 +78,6 @@ class AsyncTextView: UITextView {
                 if let effectiveTextStyle = effectiveTextStyle {
                     let scaledFont = UIFontMetrics(forTextStyle: effectiveTextStyle).scaledFont(for: font)
                     attributes[.font] = scaledFont
-                    attributes[.adjustsFontForContentSizeCategory] = true
                 } else {
                     attributes[.font] = font
                 }
